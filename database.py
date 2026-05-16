@@ -1,7 +1,10 @@
 import sqlite3
+import os
+
+DB_PATH = os.path.join(os.path.dirname(__file__), 'quizbot.db')
 
 def init_db():
-    conn = sqlite3.connect('quizbot.db')
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
     # Users table
@@ -57,14 +60,14 @@ def init_db():
     conn.close()
 
 def set_user_state(user_id, state):
-    conn = sqlite3.connect('quizbot.db')
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("UPDATE users SET state = ? WHERE user_id = ?", (state, user_id))
     conn.commit()
     conn.close()
 
 def get_user_state(user_id):
-    conn = sqlite3.connect('quizbot.db')
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT state FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
@@ -72,7 +75,7 @@ def get_user_state(user_id):
     return row[0] if row else 'none'
 
 def create_quiz(creator_id, title):
-    conn = sqlite3.connect('quizbot.db')
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("INSERT INTO quizzes (creator_id, title) VALUES (?, ?)", (creator_id, title))
     quiz_id = cursor.lastrowid
@@ -80,7 +83,30 @@ def create_quiz(creator_id, title):
     conn.close()
     return quiz_id
 
-# Boshqa funksiyalarni ehtiyojga qarab shu yerga qo'shib boramiz
+# Boshqa funksiyalar
+def get_my_quizzes(user_id):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT quiz_id, title FROM quizzes WHERE creator_id = ?", (user_id,))
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+def get_all_quizzes():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT quiz_id, title FROM quizzes")
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+def get_quiz_by_id(quiz_id):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT title, description FROM quizzes WHERE quiz_id = ?", (quiz_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return row
 
 if __name__ == "__main__":
     init_db()

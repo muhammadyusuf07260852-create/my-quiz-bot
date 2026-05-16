@@ -24,7 +24,7 @@ def get_current_quiz_id(user_id):
     session = user_sessions.get(user_id)
     if session and 'quiz_id' in session:
         return session['quiz_id']
-    conn = sqlite3.connect('quizbot.db')
+    conn = sqlite3.connect(database.DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT quiz_id FROM quizzes WHERE creator_id = ? ORDER BY quiz_id DESC LIMIT 1", (user_id,))
     res = cursor.fetchone()
@@ -43,6 +43,15 @@ def get_question_keyboard():
     markup.add(btn_poll, btn_done)
     return markup
 
+def get_main_keyboard():
+    markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    btn_new = KeyboardButton('➕ Yangi test yaratish')
+    btn_my = KeyboardButton('📂 Mening testlarim')
+    btn_all = KeyboardButton('🌐 Barcha testlar')
+    btn_results = KeyboardButton('📊 Natijalar')
+    markup.add(btn_new, btn_my, btn_all, btn_results)
+    return markup
+
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     chat_type = message.chat.type
@@ -52,8 +61,11 @@ def send_welcome(message):
     # Agar guruhda bo'lsa
     if chat_type in ['group', 'supergroup']:
         if payload and payload.startswith('quiz_'):
-            quiz_id = payload.split('_')[1]
-            init_group_quiz(message.chat.id, quiz_id)
+            try:
+                quiz_id = int(payload.split('_')[1])
+                init_group_quiz(message.chat.id, quiz_id)
+            except (IndexError, ValueError):
+                bot.send_message(message.chat.id, "Xato link formatı.")
         return
 
     # Shaxsiy chat (Private)
@@ -61,7 +73,7 @@ def send_welcome(message):
     username = message.from_user.username
     first_name = message.from_user.first_name
     
-    conn = sqlite3.connect('quizbot.db')
+    conn = sqlite3.connect(database.DB_PATH)
     cursor = conn.cursor()
     cursor.execute("INSERT OR IGNORE INTO users (user_id, username, first_name) VALUES (?, ?, ?)", 
                    (user_id, username, first_name))
@@ -70,8 +82,11 @@ def send_welcome(message):
 
     # Deep linking (Yakkaxon test yechish)
     if payload and payload.startswith('quiz_'):
-        quiz_id = payload.split('_')[1]
-        start_taking_quiz(message, quiz_id)
+        try:
+            quiz_id = int(payload.split('_')[1])
+            start_taking_quiz(message, quiz_id)
+        except (IndexError, ValueError):
+            bot.reply_to(message, "Xato link formati.")
         return
 
     database.set_user_state(user_id, 'none')
@@ -79,12 +94,12 @@ def send_welcome(message):
     welcome_text = (
         f"Assalomu alaykum, {first_name}! 👋\n\n"
         "Men Telegram Quiz Botman. Men yordamida siz turli xil testlar va viktorinalar yaratishingiz mumkin.\n\n"
-        "Yangi test yaratish uchun /newquiz buyrug'ini yuboring."
+        "Quyidagi menyudan kerakli bo'limni tanlang:"
     )
-    bot.reply_to(message, welcome_text, reply_markup=ReplyKeyboardRemove())
+    bot.reply_to(message, welcome_text, reply_markup=get_main_keyboard())
 
 def prepare_questions(quiz_id):
-    conn = sqlite3.connect('quizbot.db')
+    conn = sqlite3.connect(database.DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT shuffle_mode FROM quizzes WHERE quiz_id = ?", (quiz_id,))
     res = cursor.fetchone()
@@ -116,13 +131,15 @@ def prepare_questions(quiz_id):
 # --- YAKKAXON TEST YECHISH ---
 def start_taking_quiz(message, quiz_id):
     user_id = message.from_user.id
-    conn = sqlite3.connect('quizbot.db')
+    conn = sqlite3.connect(database.DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT title, description FROM quizzes WHERE quiz_id = ?", (quiz_id,))
     quiz = cursor.fetchone()
     conn.close()
     if not quiz:
-        bot.reply_to(message, "Kechirasiz, bunday test topilmadi.")
+        all_q = database.get_all_quizzes()
+        all_ids = [str(q[0]) for q in all_q]
+        bot.reply_to(message, f"Kechirasiz, bunday test (ID: {quiz_id}) topilmadi.\nBazadagi mavjud testlar IDlari: {', '.join(all_ids)}")
         return
         
     questions = prepare_questions(quiz_id)
@@ -180,7 +197,7 @@ def send_next_question(user_id, chat_id):
     else:
         score = session['score']
         total = len(questions)
-        conn = sqlite3.connect('quizbot.db')
+        conn = sqlite3.connect(database.DB_PATH)
         cursor = conn.cursor()
         cursor.execute("INSERT INTO results (user_id, quiz_id, score) VALUES (?, ?, ?)", (user_id, session['quiz_id'], score))
         conn.commit()
@@ -204,14 +221,16 @@ def handle_question_timeout(user_id, q_index):
 
 # --- GURUHDA TEST YECHISH ---
 def init_group_quiz(chat_id, quiz_id):
-    conn = sqlite3.connect('quizbot.db')
+    conn = sqlite3.connect(database.DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT title FROM quizzes WHERE quiz_id = ?", (quiz_id,))
     quiz = cursor.fetchone()
     conn.close()
     
     if not quiz:
-        bot.send_message(chat_id, "Kechirasiz, bunday test topilmadi.")
+        all_q = database.get_all_quizzes()
+        all_ids = [str(q[0]) for q in all_q]
+        bot.send_message(chat_id, f"Kechirasiz, bunday test (ID: {quiz_id}) topilmadi.\nBazadagi mavjud testlar IDlari: {', '.join(all_ids)}")
         return
         
     questions = prepare_questions(quiz_id)
@@ -444,7 +463,7 @@ def set_quiz_time_limit(call):
         quiz_id = get_current_quiz_id(user_id)
         
         if quiz_id:
-            conn = sqlite3.connect('quizbot.db')
+            conn = sqlite3.connect(database.DB_PATH)
             cursor = conn.cursor()
             cursor.execute("UPDATE questions SET time_limit = ? WHERE quiz_id = ?", (time_limit, quiz_id))
             conn.commit()
@@ -475,7 +494,7 @@ def set_quiz_shuffle(call):
         quiz_id = get_current_quiz_id(user_id)
         
         if quiz_id:
-            conn = sqlite3.connect('quizbot.db')
+            conn = sqlite3.connect(database.DB_PATH)
             cursor = conn.cursor()
             cursor.execute("UPDATE quizzes SET shuffle_mode = ? WHERE quiz_id = ?", (shuffle_mode, quiz_id))
             conn.commit()
@@ -526,7 +545,7 @@ def handle_text(message):
     elif state == 'waiting_for_description':
         description = message.text
         quiz_id = get_current_quiz_id(user_id)
-        conn = sqlite3.connect('quizbot.db')
+        conn = sqlite3.connect(database.DB_PATH)
         cursor = conn.cursor()
         cursor.execute("UPDATE quizzes SET description = ? WHERE quiz_id = ?", (description, quiz_id))
         conn.commit()
@@ -534,8 +553,53 @@ def handle_text(message):
         database.set_user_state(user_id, 'waiting_for_questions')
         text = "Izoh saqlandi.\n\nEndi test uchun savollarni yuboring. Pastdagi **«Savol yaratish»** tugmasini bosing va o'z savolingizni tayyorlang.\n\n⚠️ **Muhim:** Android telefonlarda xatolik (qizil undov) chiqmasligi uchun savol yaratayotganda **«Anonim viktorina» (Анонимное голосование)** belgisini o'chirib qo'ying!\n\nBarcha savollarni yuborib bo'lgach, **«Tugatish»** tugmasini bosing."
         bot.reply_to(message, text, reply_markup=get_question_keyboard())
+    elif message.text == '➕ Yangi test yaratish':
+        create_new_quiz(message)
+        
+    elif message.text == '📂 Mening testlarim':
+        show_my_quizzes(message)
+        
+    elif message.text == '🌐 Barcha testlar':
+        show_all_quizzes(message)
+        
+    elif message.text == '📊 Natijalar':
+        bot.reply_to(message, "Natijalar bo'limi tez kunda ishga tushadi! 🔜")
+
     else:
-        bot.reply_to(message, "Salom! Men Telegram Quiz Botman. Botdan foydalanish uchun quyidagi buyruqlardan birini tanlang:\n\n/start - Bosh menyu\n/newquiz - Yangi test yaratish")
+        bot.reply_to(message, "Asosiy menyu:", reply_markup=get_main_keyboard())
+
+def show_my_quizzes(message):
+    user_id = message.from_user.id
+    quizzes = database.get_my_quizzes(user_id)
+    
+    if not quizzes:
+        bot.reply_to(message, "Sizda hali yaratilgan testlar yo'q. /newquiz orqali yangi test yarating.")
+        return
+        
+    text = "📂 **Sizning testlaringiz:**\n\n"
+    markup = InlineKeyboardMarkup()
+    for q_id, title in quizzes:
+        text += f"🔹 {title}\n"
+        start_url = f"https://t.me/{bot_info.username}?start=quiz_{q_id}"
+        markup.add(InlineKeyboardButton(f" Ishlash: {title}", url=start_url))
+        
+    bot.reply_to(message, text, reply_markup=markup, parse_mode='Markdown')
+
+def show_all_quizzes(message):
+    quizzes = database.get_all_quizzes()
+    
+    if not quizzes:
+        bot.reply_to(message, "Hozircha botda hech qanday test mavjud emas.")
+        return
+        
+    text = "🌐 **Barcha mavjud testlar:**\n\n"
+    markup = InlineKeyboardMarkup()
+    for q_id, title in quizzes:
+        text += f"🔸 {title}\n"
+        start_url = f"https://t.me/{bot_info.username}?start=quiz_{q_id}"
+        markup.add(InlineKeyboardButton(f" Ishlash: {title}", url=start_url))
+        
+    bot.reply_to(message, text, reply_markup=markup, parse_mode='Markdown')
 
 @bot.message_handler(content_types=['poll'])
 def handle_poll(message):
@@ -555,7 +619,7 @@ def handle_poll(message):
         correct_option_id = poll.correct_option_id
         explanation = poll.explanation if poll.explanation else ""
         
-        conn = sqlite3.connect('quizbot.db')
+        conn = sqlite3.connect(database.DB_PATH)
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO questions (quiz_id, question_text, options, correct_option_id, explanation)
