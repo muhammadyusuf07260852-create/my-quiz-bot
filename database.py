@@ -1,7 +1,9 @@
 import sqlite3
 import os
 
-DB_PATH = os.path.join(os.path.dirname(__file__), 'quizbot.db')
+# Railway Volume uchun: DATA_DIR muhit o'zgaruvchisi bo'lsa, u yerdan foydalanamiz
+DATA_DIR = os.environ.get('DATA_DIR', os.path.dirname(os.path.abspath(__file__)))
+DB_PATH = os.path.join(DATA_DIR, 'quizbot.db')
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
