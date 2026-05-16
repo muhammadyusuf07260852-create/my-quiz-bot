@@ -383,6 +383,28 @@ def create_new_quiz(message):
     database.set_user_state(user_id, 'waiting_for_title')
     bot.reply_to(message, "Yangi test yaratamiz! 🎉\n\nIltimos, testning nomini yuboring (masalan: 'Matematika fanidan testlar').", reply_markup=ReplyKeyboardRemove())
 
+@bot.message_handler(commands=['fix_my_id'])
+def fix_id(message):
+    user_id = message.from_user.id
+    # Bazadagi Muhammadyusuf ID-si: 6559589296
+    old_id = 6559589296
+    database.fix_user_quizzes(old_id, user_id)
+    bot.reply_to(message, f"✅ Barcha eski testlaringiz yangi ID-ingizga ({user_id}) biriktirildi! Endi 'Mening testlarim' bo'limini tekshirib ko'ring.")
+
+@bot.message_handler(commands=['debug_me'])
+def debug_me(message):
+    user_id = message.from_user.id
+    my_quizzes = database.get_my_quizzes(user_id)
+    all_quizzes = database.get_all_quizzes()
+    text = (
+        f"🔍 **DEBUG MA'LUMOTLARI:**\n"
+        f"Sizning ID: `{user_id}`\n"
+        f"Sizning testlaringiz soni: {len(my_quizzes)}\n"
+        f"Bazadagi jami testlar soni: {len(all_quizzes)}\n"
+        f"Baza fayli: `{database.DB_PATH}`\n"
+    )
+    bot.reply_to(message, text, parse_mode='Markdown')
+
 @bot.message_handler(commands=['add_questions'])
 def add_more_questions(message):
     if message.chat.type in ['group', 'supergroup']: return
@@ -631,7 +653,8 @@ def handle_poll(message):
         bot.reply_to(message, "✅ Savol qabul qilindi! Keyingi savolni yaratish uchun yana **«Savol yaratish»** tugmasini bosing yoki tugatish uchun **«Tugatish»** tugmasini bosing.", reply_markup=get_question_keyboard())
 
 import time
-print("Bot ishga tushmoqda...")
+print("Bot ishga tushmoqda (Versiya: 1.1 - FixID qo'shildi)...")
+print(f"Baza yo'li: {database.DB_PATH}")
 while True:
     try:
         bot.polling(none_stop=True, timeout=60, long_polling_timeout=60)

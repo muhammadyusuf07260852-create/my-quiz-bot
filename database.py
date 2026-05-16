@@ -108,6 +108,13 @@ def get_quiz_by_id(quiz_id):
     conn.close()
     return row
 
+def fix_user_quizzes(old_id, new_id):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE quizzes SET creator_id = ? WHERE creator_id = ?", (new_id, old_id))
+    conn.commit()
+    conn.close()
+
 if __name__ == "__main__":
     init_db()
     print("Database initialized successfully.")
