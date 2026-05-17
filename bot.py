@@ -92,9 +92,8 @@ def get_main_keyboard():
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     btn_new = KeyboardButton('➕ Yangi test yaratish')
     btn_my = KeyboardButton('📂 Mening testlarim')
-    btn_all = KeyboardButton('🌐 Barcha testlar')
     btn_results = KeyboardButton('📊 Natijalar')
-    markup.add(btn_new, btn_my, btn_all, btn_results)
+    markup.add(btn_new, btn_my, btn_results)
     return markup
 
 @bot.message_handler(commands=['start'])
@@ -626,8 +625,7 @@ def handle_text(message):
     elif message.text == '📂 Mening testlarim':
         show_my_quizzes(message)
         
-    elif message.text == '🌐 Barcha testlar':
-        show_all_quizzes(message)
+
         
     elif message.text == '📊 Natijalar':
         bot.reply_to(message, "Natijalar bo'limi tez kunda ishga tushadi! 🔜")
@@ -652,21 +650,7 @@ def show_my_quizzes(message):
         
     bot.reply_to(message, text, reply_markup=markup, parse_mode='Markdown')
 
-def show_all_quizzes(message):
-    quizzes = database.get_all_quizzes()
-    
-    if not quizzes:
-        bot.reply_to(message, "Hozircha botda hech qanday test mavjud emas.")
-        return
-        
-    text = "🌐 **Barcha mavjud testlar:**\n\n"
-    markup = InlineKeyboardMarkup()
-    for q_id, title in quizzes:
-        text += f"🔸 {title}\n"
-        start_url = f"https://t.me/{bot_info.username}?start=quiz_{q_id}"
-        markup.add(InlineKeyboardButton(f" Ishlash: {title}", url=start_url))
-        
-    bot.reply_to(message, text, reply_markup=markup, parse_mode='Markdown')
+
 
 @bot.message_handler(content_types=['poll'])
 def handle_poll(message):
@@ -980,8 +964,13 @@ def generate_ai_quiz_thread(message, user_id, session, count):
     except json.JSONDecodeError:
         bot.edit_message_text("❌ Xatolik: AI qaytargan ma'lumotni JSON formatida o'qib bo'lmadi. Qayta urinib ko'ring.", chat_id=chat_id, message_id=message_id)
     except Exception as e:
-        print(f"AI error: {e}")
-        bot.edit_message_text(f"❌ Test yaratishda kutilmagan xatolik yuz berdi: {e}", chat_id=chat_id, message_id=message_id)
+        error_msg = str(e)
+        print(f"AI error: {error_msg}")
+        if "429" in error_msg or "Quota" in error_msg:
+            user_msg = "❌ Kechirasiz, ayni vaqtda botga so'rovlar juda ko'payib ketdi (AI limiti tugadi). Iltimos, birozdan so'ng (1-2 daqiqa) qayta urinib ko'ring."
+        else:
+            user_msg = "❌ Test yaratishda kutilmagan xatolik yuz berdi. Iltimos, qaytadan urinib ko'ring."
+        bot.edit_message_text(user_msg, chat_id=chat_id, message_id=message_id)
 
 
 
