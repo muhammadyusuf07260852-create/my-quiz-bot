@@ -3,3 +3,4 @@ python-dotenv
 google-generativeai
 pypdf
 python-docx
+python-pptx

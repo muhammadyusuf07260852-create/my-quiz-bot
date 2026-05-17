@@ -9,7 +9,29 @@ import threading
 import random
 import docx
 import pypdf
+from pptx import Presentation
 import google.generativeai as genai
+
+def extract_text_from_pptx(file_path):
+    try:
+        prs = Presentation(file_path)
+        text_runs = []
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                if shape.has_text_frame:
+                    for paragraph in shape.text_frame.paragraphs:
+                        for run in paragraph.runs:
+                            if run.text:
+                                text_runs.append(run.text)
+                elif shape.has_table:
+                    for row in shape.table.rows:
+                        for cell in row.cells:
+                            if cell.text:
+                                text_runs.append(cell.text)
+        return "\n".join(text_runs).strip()
+    except Exception as e:
+        print(f"PPTX extract error: {e}")
+        return ""
 
 load_dotenv()
 BOT_TOKEN = os.getenv('BOT_TOKEN')
@@ -716,8 +738,8 @@ def handle_document(message):
     file_name = message.document.file_name
     file_ext = os.path.splitext(file_name)[1].lower()
     
-    if file_ext not in ['.pdf', '.docx', '.txt']:
-        bot.reply_to(message, "❌ Kechirasiz, faqat `.pdf`, `.docx` va `.txt` formatidagi fayllarni qabul qila olaman.")
+    if file_ext not in ['.pdf', '.docx', '.txt', '.pptx']:
+        bot.reply_to(message, "❌ Kechirasiz, faqat `.pdf`, `.docx`, `.pptx` va `.txt` formatidagi fayllarni qabul qila olaman.")
         return
         
     processing_msg = bot.reply_to(message, "📥 **Hujjat yuklab olinmoqda va o'qilmoqda...** Iltimos, kuting ⏳", parse_mode='Markdown')
@@ -737,6 +759,8 @@ def handle_document(message):
             content_text = extract_text_from_pdf(temp_path)
         elif file_ext == '.docx':
             content_text = extract_text_from_docx(temp_path)
+        elif file_ext == '.pptx':
+            content_text = extract_text_from_pptx(temp_path)
         elif file_ext == '.txt':
             content_text = downloaded_file.decode('utf-8', errors='ignore')
             
