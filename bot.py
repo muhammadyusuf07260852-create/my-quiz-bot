@@ -7,11 +7,56 @@ import database
 import json
 import threading
 import random
+import docx
+import pypdf
+import google.generativeai as genai
 
 load_dotenv()
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 bot = telebot.TeleBot(BOT_TOKEN)
+
+# Gemini AI konfiguratsiyasi
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+
+# AI vaqtinchalik sessiyalari
+ai_sessions = {}
+
+def extract_text_from_pdf(file_path):
+    try:
+        reader = pypdf.PdfReader(file_path)
+        text = ""
+        for page in reader.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n"
+        return text.strip()
+    except Exception as e:
+        print(f"PDF extract error: {e}")
+        return ""
+
+def extract_text_from_docx(file_path):
+    try:
+        doc = docx.Document(file_path)
+        text = ""
+        for para in doc.paragraphs:
+            if para.text:
+                text += para.text + "\n"
+        return text.strip()
+    except Exception as e:
+        print(f"Docx extract error: {e}")
+        return ""
+
 bot_info = bot.get_me()
+
+# Telegram botda buyruqlar menyusini o'rnatish (/ bosganda chiqadi)
+bot.set_my_commands([
+    telebot.types.BotCommand('/start',        '🏠 Bosh menyu'),
+    telebot.types.BotCommand('/newquiz',      '➕ Yangi test yaratish'),
+    telebot.types.BotCommand('/add_questions','📝 Testga savol qo\'shish'),
+    telebot.types.BotCommand('/stop',         '🛑 Jarayonni to\'xtatish'),
+])
 
 database.init_db()
 
@@ -651,6 +696,294 @@ def handle_poll(message):
         conn.close()
         
         bot.reply_to(message, "✅ Savol qabul qilindi! Keyingi savolni yaratish uchun yana **«Savol yaratish»** tugmasini bosing yoki tugatish uchun **«Tugatish»** tugmasini bosing.", reply_markup=get_question_keyboard())
+
+# --- AI ORQALI TEST YARATISH (Fayl va Rasmlar) ---
+
+@bot.message_handler(content_types=['document'])
+def handle_document(message):
+    if message.chat.type in ['group', 'supergroup']: return
+    user_id = message.from_user.id
+    
+    # API key mavjudligini tekshirish
+    if not os.getenv('GEMINI_API_KEY'):
+        text = (
+            "⚠️ **AI Quiz funksiyasi faol emas!**\n\n"
+            "Ushbu funksiyadan foydalanish uchun bot egasi `.env` fayliga `GEMINI_API_KEY` kalitini qo'shishi kerak.\n\n"
+            "🔑 **Kalitni qanday olish mumkin?**\n"
+            "1. https://aistudio.google.com/ saytiga kiring.\n"
+            "2. Bepul **Gemini API Key** oling.\n"
+            "3. Botning `.env` fayliga yozing:\n"
+            "`GEMINI_API_KEY=sizning_kalitingiz`"
+        )
+        bot.reply_to(message, text, parse_mode='Markdown')
+        return
+
+    file_name = message.document.file_name
+    file_ext = os.path.splitext(file_name)[1].lower()
+    
+    if file_ext not in ['.pdf', '.docx', '.txt']:
+        bot.reply_to(message, "❌ Kechirasiz, faqat `.pdf`, `.docx` va `.txt` formatidagi fayllarni qabul qila olaman.")
+        return
+        
+    processing_msg = bot.reply_to(message, "📥 **Hujjat yuklab olinmoqda va o'qilmoqda...** Iltimos, kuting ⏳", parse_mode='Markdown')
+    
+    try:
+        file_info = bot.get_file(message.document.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        
+        # Faylni vaqtinchalik saqlash
+        temp_path = f"temp_{user_id}{file_ext}"
+        with open(temp_path, 'wb') as new_file:
+            new_file.write(downloaded_file)
+            
+        # Matnni ajratib olish
+        content_text = ""
+        if file_ext == '.pdf':
+            content_text = extract_text_from_pdf(temp_path)
+        elif file_ext == '.docx':
+            content_text = extract_text_from_docx(temp_path)
+        elif file_ext == '.txt':
+            content_text = downloaded_file.decode('utf-8', errors='ignore')
+            
+        # Vaqtinchalik faylni o'chirish
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+            
+        if not content_text or len(content_text.strip()) < 20:
+            bot.edit_message_text("❌ Fayldan matn o'qib bo'lmadi yoki undagi matn juda qisqa (kamida 20 ta belgi bo'lishi kerak).", chat_id=message.chat.id, message_id=processing_msg.message_id)
+            return
+            
+        # Sessiyaga yozish
+        ai_sessions[user_id] = {
+            'type': 'text',
+            'data': content_text,
+            'file_name': file_name
+        }
+        
+        # Savollar sonini tanlash tugmalari
+        markup = InlineKeyboardMarkup()
+        markup.row(InlineKeyboardButton("5 ta savol 📝", callback_data="ai_count_5"),
+                   InlineKeyboardButton("10 ta savol 📝", callback_data="ai_count_10"))
+        markup.row(InlineKeyboardButton("15 ta savol 📝", callback_data="ai_count_15"),
+                   InlineKeyboardButton("20 ta savol 📝", callback_data="ai_count_20"))
+        
+        success_text = (
+            f"📄 **Fayl muvaffaqiyatli o'qildi!**\n"
+            f"Hujjat: `{file_name}`\n"
+            f"Matn hajmi: {len(content_text)} ta belgi.\n\n"
+            f"Ushbu fayl asosida nechta test savoli yaratmoqchisiz? Tanlang 👇"
+        )
+        bot.edit_message_text(success_text, chat_id=message.chat.id, message_id=processing_msg.message_id, reply_markup=markup, parse_mode='Markdown')
+        
+    except Exception as e:
+        bot.edit_message_text(f"❌ Faylni yuklash yoki o'qishda xatolik yuz berdi: {e}", chat_id=message.chat.id, message_id=processing_msg.message_id)
+
+
+@bot.message_handler(content_types=['photo'])
+def handle_photo(message):
+    if message.chat.type in ['group', 'supergroup']: return
+    user_id = message.from_user.id
+    
+    # API key mavjudligini tekshirish
+    if not os.getenv('GEMINI_API_KEY'):
+        text = (
+            "⚠️ **AI Quiz funksiyasi faol emas!**\n\n"
+            "Ushbu funksiyadan foydalanish uchun bot egasi `.env` fayliga `GEMINI_API_KEY` kalitini qo'shishi kerak.\n\n"
+            "🔑 **Kalitni qanday olish mumkin?**\n"
+            "1. https://aistudio.google.com/ saytiga kiring.\n"
+            "2. Bepul **Gemini API Key** oling.\n"
+            "3. Botning `.env` fayliga yozing:\n"
+            "`GEMINI_API_KEY=sizning_kalitingiz`"
+        )
+        bot.reply_to(message, text, parse_mode='Markdown')
+        return
+
+    processing_msg = bot.reply_to(message, "📥 **Rasm yuklab olinmoqda...** Iltimos, kuting ⏳", parse_mode='Markdown')
+    
+    try:
+        # Eng katta rasmni olish
+        photo = message.photo[-1]
+        file_info = bot.get_file(photo.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        
+        # Sessiyaga yozish (Gemini uchun bayt ko'rinishida)
+        ai_sessions[user_id] = {
+            'type': 'image',
+            'data': downloaded_file,
+            'file_name': 'Rasm'
+        }
+        
+        # Savollar sonini tanlash tugmalari
+        markup = InlineKeyboardMarkup()
+        markup.row(InlineKeyboardButton("5 ta savol 📝", callback_data="ai_count_5"),
+                   InlineKeyboardButton("10 ta savol 📝", callback_data="ai_count_10"))
+        markup.row(InlineKeyboardButton("15 ta savol 📝", callback_data="ai_count_15"),
+                   InlineKeyboardButton("20 ta savol 📝", callback_data="ai_count_20"))
+        
+        success_text = (
+            f"🖼 **Rasm muvaffaqiyatli qabul qilindi!**\n\n"
+            f"Ushbu rasm/skrinshotdagi ma'lumotlar asosida nechta test savoli yaratmoqchisiz? Tanlang 👇"
+        )
+        bot.edit_message_text(success_text, chat_id=message.chat.id, message_id=processing_msg.message_id, reply_markup=markup, parse_mode='Markdown')
+        
+    except Exception as e:
+        bot.edit_message_text(f"❌ Rasmni yuklashda xatolik yuz berdi: {e}", chat_id=message.chat.id, message_id=processing_msg.message_id)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("ai_count_"))
+def handle_ai_count(call):
+    user_id = call.from_user.id
+    session = ai_sessions.get(user_id)
+    
+    if not session:
+        bot.answer_callback_query(call.id, "Sessiya eskirgan. Qaytadan urinib ko'ring.")
+        bot.edit_message_text("❌ Hech qanday faol AI sessiyasi topilmadi. Qayta urinib ko'ring (botga yangi fayl yoki rasm yuboring).", 
+                              chat_id=call.message.chat.id, message_id=call.message.message_id)
+        return
+        
+    count = int(call.data.split('_')[2])
+    bot.answer_callback_query(call.id, f"{count} ta savol tanlandi!")
+    
+    bot.edit_message_text(f"🤖 **AI ma'lumotlarni tahlil qilmoqda va test yaratmoqda...**\n"
+                          f"Savollar soni: {count} ta\n\n"
+                          f"Iltimos, kuting. Bu jarayon 10-30 soniya vaqt olishi mumkin ⏳", 
+                          chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode='Markdown')
+    
+    # Asosiy polling bloklanib qolmasligi uchun alohida thread (oqim) ishga tushiramiz
+    threading.Thread(target=generate_ai_quiz_thread, args=(call.message, user_id, session, count)).start()
+
+
+def generate_ai_quiz_thread(message, user_id, session, count):
+    chat_id = message.chat.id
+    message_id = message.message_id
+    
+    try:
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        
+        prompt = (
+            f"Sizga taqdim etilgan matn yoki rasmdagi ma'lumotlardan foydalanib, roppa-rosa {count} ta "
+            "ko'p variantli (multiple choice) test savollarini yarating. "
+            "Barcha savollar, variantlar va tushuntirishlar faqat o'zbek tilida bo'lishi kerak. "
+            "Har bir savol uchun aniq 4 ta variant (options) tayyorlang.\n\n"
+            "Agar matnda tayyor savollar va to'g'ri javoblar ko'rsatilgan bo'lsa (masalan `#`, `*`, `bold` belgilar orqali), "
+            "o'sha tayyor savollardan va ko'rsatilgan to'g'ri javoblardan foydalaning va to'g'ri javobning indeksini belgilang.\n\n"
+            "Natijani mutlaqo qat'iy ravishda quyidagi JSON formatida qaytaring. Hech qanday boshqa matn, kirish yoki markdown formatting (masalan ```json) qo'shmang, "
+            "faqat quyidagi struktura bo'yicha toza JSON yuboring:\n"
+            "{\n"
+            '  "title": "Mavzuga mos chiroyli test sarlavhasi (maksimal 50 ta belgi)",\n'
+            '  "description": "Fayl/mavzu haqida qisqacha izoh (maksimal 150 ta belgi)",\n'
+            '  "questions": [\n'
+            "    {\n"
+            '      "question": "Savol matni (maksimal 150 ta belgi)",\n'
+            '      "options": ["1-variant", "2-variant", "3-variant", "4-variant"],\n'
+            '      "correct_option_index": 0,\n'
+            '      "explanation": "Nega aynan shu variant to\'g\'ri ekanligining qisqacha izohi (maksimal 100 ta belgi, ixtiyoriy)"\n'
+            "    }\n"
+            "  ]\n"
+            "}"
+        )
+        
+        # Gemini modeliga so'rov yuborish
+        if session['type'] == 'text':
+            full_content = f"Hujjat nomi: {session['file_name']}\n\nHujjat matni:\n{session['data']}"
+            if len(full_content) > 60000:
+                full_content = full_content[:60000] + "\n...[Matn juda uzunligi uchun kesildi]..."
+                
+            response = model.generate_content(
+                [prompt, full_content],
+                generation_config={"response_mime_type": "application/json"}
+            )
+        else:
+            image_part = {
+                "mime_type": "image/jpeg",
+                "data": session['data']
+            }
+            response = model.generate_content(
+                [prompt, image_part],
+                generation_config={"response_mime_type": "application/json"}
+            )
+            
+        raw_text = response.text.strip()
+        
+        # Agar rasm/matn mos kelmasa va xatolik bo'lsa
+        if not raw_text:
+            bot.edit_message_text("❌ Xatolik: AI matndan ma'lumot ololmadi yoki javob qaytarmadi.", chat_id=chat_id, message_id=message_id)
+            return
+            
+        # Kutilmagan markdown belgilarni tozalash (agar response_mime_type ishlamasa)
+        if raw_text.startswith("```json"):
+            raw_text = raw_text.replace("```json", "", 1)
+        if raw_text.endswith("```"):
+            raw_text = raw_text[:-3].strip()
+        raw_text = raw_text.strip()
+        
+        data = json.loads(raw_text)
+        title = data.get('title', f"AI Test - {session['file_name']}")
+        description = data.get('description', "AI tomonidan avtomatik yaratilgan test.")
+        questions = data.get('questions', [])
+        
+        if not questions:
+            bot.edit_message_text("❌ Xatolik: AI birorta ham test savoli yarata olmadi. Boshqa fayl yoki rasm yuborib ko'ring.", chat_id=chat_id, message_id=message_id)
+            return
+            
+        # Testni bazada yaratish
+        quiz_id = database.create_quiz(user_id, title)
+        
+        conn = sqlite3.connect(database.DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("UPDATE quizzes SET description = ? WHERE quiz_id = ?", (description, quiz_id))
+        
+        added_count = 0
+        for q in questions:
+            q_text = q.get('question')
+            options = q.get('options')
+            correct_idx = q.get('correct_option_index', 0)
+            explanation = q.get('explanation', '')
+            
+            if q_text and options and len(options) >= 2:
+                options_json = json.dumps(options[:10]) # Telegram max 10 ta variant qabul qiladi
+                cursor.execute("""
+                    INSERT INTO questions (quiz_id, question_text, options, correct_option_id, explanation, time_limit)
+                    VALUES (?, ?, ?, ?, ?, 15)
+                """, (quiz_id, q_text, options_json, correct_idx, explanation))
+                added_count += 1
+                
+        conn.commit()
+        conn.close()
+        
+        # Sessiyani tozalash
+        if user_id in ai_sessions:
+            del ai_sessions[user_id]
+            
+        if added_count == 0:
+            bot.edit_message_text("❌ Xatolik: Savollarni tahlil qilishda yoki bazaga yozishda muammo yuz berdi.", chat_id=chat_id, message_id=message_id)
+            return
+            
+        # O'ynash havolalarini generatsiya qilish
+        start_url = f"https://t.me/{bot_info.username}?start=quiz_{quiz_id}"
+        group_url = f"https://t.me/{bot_info.username}?startgroup=quiz_{quiz_id}"
+        
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("Yakkaxon yechish 👤", url=start_url))
+        markup.add(InlineKeyboardButton("Guruhda yechish 👥", url=group_url))
+        markup.add(InlineKeyboardButton("Do'stlarga ulashish ↗️", url=f"https://t.me/share/url?url={start_url}"))
+        
+        success_text = (
+            f"🎉 **AI Quiz muvaffaqiyatli yaratildi!**\n\n"
+            f"📌 **Sarlavha:** {title}\n"
+            f"📝 **Izoh:** {description}\n"
+            f"❓ **Savollar soni:** {added_count} ta\n\n"
+            f"Quyidagi tugmalar orqali testni yechishingiz yoki ulashishingiz mumkin:"
+        )
+        bot.edit_message_text(success_text, chat_id=chat_id, message_id=message_id, reply_markup=markup, parse_mode='Markdown')
+        
+    except json.JSONDecodeError:
+        bot.edit_message_text("❌ Xatolik: AI qaytargan ma'lumotni JSON formatida o'qib bo'lmadi. Qayta urinib ko'ring.", chat_id=chat_id, message_id=message_id)
+    except Exception as e:
+        print(f"AI error: {e}")
+        bot.edit_message_text(f"❌ Test yaratishda kutilmagan xatolik yuz berdi: {e}", chat_id=chat_id, message_id=message_id)
+
+
 
 import time
 print("Bot ishga tushmoqda (Versiya: 1.1 - FixID qo'shildi)...")

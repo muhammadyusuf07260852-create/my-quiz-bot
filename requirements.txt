@@ -1,2 +1,5 @@
 pyTelegramBotAPI
 python-dotenv
+google-generativeai
+pypdf
+python-docx
