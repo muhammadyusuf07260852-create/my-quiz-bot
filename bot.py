@@ -513,6 +513,8 @@ def ask_for_time_limit(message):
                    InlineKeyboardButton("20 s", callback_data="set_time_20"))
         markup.row(InlineKeyboardButton("25 s", callback_data="set_time_25"),
                    InlineKeyboardButton("30 s", callback_data="set_time_30"))
+        markup.row(InlineKeyboardButton("50 s", callback_data="set_time_50"),
+                   InlineKeyboardButton("120 s", callback_data="set_time_120"))
                    
         bot.send_message(message.chat.id, "Bosh menyudasiz.", reply_markup=ReplyKeyboardRemove())
         bot.reply_to(message, "Iltimos, har bir savol uchun qancha vaqt berilishini tanlang:", reply_markup=markup)
@@ -759,6 +761,8 @@ def handle_document(message):
                    InlineKeyboardButton("10 ta savol 📝", callback_data="ai_count_10"))
         markup.row(InlineKeyboardButton("15 ta savol 📝", callback_data="ai_count_15"),
                    InlineKeyboardButton("20 ta savol 📝", callback_data="ai_count_20"))
+        markup.row(InlineKeyboardButton("30 ta savol 📝", callback_data="ai_count_30"),
+                   InlineKeyboardButton("40 ta savol 📝", callback_data="ai_count_40"))
         
         limit_text = ""
         if user_id != ADMIN_ID:
@@ -829,6 +833,8 @@ def handle_photo(message):
                    InlineKeyboardButton("10 ta savol 📝", callback_data="ai_count_10"))
         markup.row(InlineKeyboardButton("15 ta savol 📝", callback_data="ai_count_15"),
                    InlineKeyboardButton("20 ta savol 📝", callback_data="ai_count_20"))
+        markup.row(InlineKeyboardButton("30 ta savol 📝", callback_data="ai_count_30"),
+                   InlineKeyboardButton("40 ta savol 📝", callback_data="ai_count_40"))
         
         limit_text = ""
         if user_id != ADMIN_ID:
@@ -860,18 +866,52 @@ def handle_ai_count(call):
         return
         
     count = int(call.data.split('_')[2])
+    session['count'] = count
     bot.answer_callback_query(call.id, f"{count} ta savol tanlandi!")
     
+    # Vaqtni tanlash tugmalari
+    markup = InlineKeyboardMarkup()
+    markup.row(InlineKeyboardButton("10 s ⏱️", callback_data="ai_time_10"),
+               InlineKeyboardButton("15 s ⏱️", callback_data="ai_time_15"),
+               InlineKeyboardButton("20 s ⏱️", callback_data="ai_time_20"))
+    markup.row(InlineKeyboardButton("25 s ⏱️", callback_data="ai_time_25"),
+               InlineKeyboardButton("50 s ⏱️", callback_data="ai_time_50"),
+               InlineKeyboardButton("120 s ⏱️", callback_data="ai_time_120"))
+               
+    text = (
+        f"🎯 Savollar soni: **{count} ta** tanlandi.\n\n"
+        f"Endi, har bir savol uchun qancha vaqt berilishini tanlang 👇"
+    )
+    bot.edit_message_text(text, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("ai_time_"))
+def handle_ai_time(call):
+    user_id = call.from_user.id
+    session = ai_sessions.get(user_id)
+    
+    if not session or 'count' not in session:
+        bot.answer_callback_query(call.id, "Sessiya eskirgan. Qaytadan urinib ko'ring.")
+        bot.edit_message_text("❌ Hech qanday faol AI sessiyasi topilmadi. Qayta urinib ko'ring.", 
+                              chat_id=call.message.chat.id, message_id=call.message.message_id)
+        return
+        
+    time_limit = int(call.data.split('_')[2])
+    count = session['count']
+    session['time_limit'] = time_limit
+    
+    bot.answer_callback_query(call.id, f"{time_limit} soniya tanlandi!")
+    
     bot.edit_message_text(f"🤖 **AI ma'lumotlarni tahlil qilmoqda va test yaratmoqda...**\n"
-                          f"Savollar soni: {count} ta\n\n"
+                          f"Savollar soni: {count} ta\n"
+                          f"Vaqt limiti: {time_limit} soniya\n\n"
                           f"Iltimos, kuting. Bu jarayon 10-30 soniya vaqt olishi mumkin ⏳", 
                           chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode='Markdown')
     
-    # Asosiy polling bloklanib qolmasligi uchun alohida thread (oqim) ishga tushiramiz
-    threading.Thread(target=generate_ai_quiz_thread, args=(call.message, user_id, session, count)).start()
+    threading.Thread(target=generate_ai_quiz_thread, args=(call.message, user_id, session, count, time_limit)).start()
 
 
-def generate_ai_quiz_thread(message, user_id, session, count):
+def generate_ai_quiz_thread(message, user_id, session, count, time_limit):
     chat_id = message.chat.id
     message_id = message.message_id
     
@@ -962,8 +1002,8 @@ def generate_ai_quiz_thread(message, user_id, session, count):
                 options_json = json.dumps(options[:10]) # Telegram max 10 ta variant qabul qiladi
                 cursor.execute("""
                     INSERT INTO questions (quiz_id, question_text, options, correct_option_id, explanation, time_limit)
-                    VALUES (?, ?, ?, ?, ?, 15)
-                """, (quiz_id, q_text, options_json, correct_idx, explanation))
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (quiz_id, q_text, options_json, correct_idx, explanation, time_limit))
                 added_count += 1
                 
         conn.commit()
