@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import datetime
 
 # Railway Volume uchun: DATA_DIR muhit o'zgaruvchisi bo'lsa, u yerdan foydalanamiz
 DATA_DIR = os.environ.get('DATA_DIR', os.path.dirname(os.path.abspath(__file__)))
@@ -55,6 +56,16 @@ def init_db():
         time_taken INTEGER,
         FOREIGN KEY(user_id) REFERENCES users(user_id),
         FOREIGN KEY(quiz_id) REFERENCES quizzes(quiz_id)
+    )
+    ''')
+
+    # AI usage limit table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS ai_usage (
+        user_id INTEGER,
+        usage_date TEXT,
+        request_count INTEGER DEFAULT 0,
+        PRIMARY KEY(user_id, usage_date)
     )
     ''')
 
@@ -114,6 +125,39 @@ def fix_user_quizzes(old_id, new_id):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("UPDATE quizzes SET creator_id = ? WHERE creator_id = ?", (new_id, old_id))
+    conn.commit()
+    conn.close()
+
+def get_daily_ai_usage(user_id):
+    today = datetime.date.today().isoformat()
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS ai_usage (
+        user_id INTEGER,
+        usage_date TEXT,
+        request_count INTEGER DEFAULT 0,
+        PRIMARY KEY(user_id, usage_date)
+    )
+    ''')
+    cursor.execute("SELECT request_count FROM ai_usage WHERE user_id = ? AND usage_date = ?", (user_id, today))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else 0
+
+def increment_daily_ai_usage(user_id):
+    today = datetime.date.today().isoformat()
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS ai_usage (
+        user_id INTEGER,
+        usage_date TEXT,
+        request_count INTEGER DEFAULT 0,
+        PRIMARY KEY(user_id, usage_date)
+    )
+    ''')
+    cursor.execute("INSERT OR REPLACE INTO ai_usage (user_id, usage_date, request_count) VALUES (?, ?, COALESCE((SELECT request_count FROM ai_usage WHERE user_id = ? AND usage_date = ?), 0) + 1)", (user_id, today, user_id, today))
     conn.commit()
     conn.close()
 

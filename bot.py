@@ -688,6 +688,15 @@ def handle_document(message):
     if message.chat.type in ['group', 'supergroup']: return
     user_id = message.from_user.id
     
+    ADMIN_ID = 6559589296
+    
+    # Limit tekshirish
+    if user_id != ADMIN_ID:
+        usage = database.get_daily_ai_usage(user_id)
+        if usage >= 3:
+            bot.reply_to(message, "❌ Sizning bugungi limitingiz tugadi. Ertaga fayl yoki rasmlaringizni qaytadan yuborib ko'ring.")
+            return
+            
     # API key mavjudligini tekshirish
     if not os.getenv('GEMINI_API_KEY'):
         text = (
@@ -751,10 +760,18 @@ def handle_document(message):
         markup.row(InlineKeyboardButton("15 ta savol 📝", callback_data="ai_count_15"),
                    InlineKeyboardButton("20 ta savol 📝", callback_data="ai_count_20"))
         
+        limit_text = ""
+        if user_id != ADMIN_ID:
+            usage = database.get_daily_ai_usage(user_id)
+            limit_text = f"\n⚠️ *Eslatma: Siz bir kunda maksimal 3 tagacha fayl yoki rasm yubora olasiz. (Bugungi qolgan limitingiz: {3 - usage} ta)*\n"
+        else:
+            limit_text = f"\n⭐ *Siz uchun AI limiti cheksiz!*\n"
+            
         success_text = (
             f"📄 **Fayl muvaffaqiyatli o'qildi!**\n"
             f"Hujjat: `{file_name}`\n"
-            f"Matn hajmi: {len(content_text)} ta belgi.\n\n"
+            f"Matn hajmi: {len(content_text)} ta belgi.\n"
+            f"{limit_text}\n"
             f"Ushbu fayl asosida nechta test savoli yaratmoqchisiz? Tanlang 👇"
         )
         bot.edit_message_text(success_text, chat_id=message.chat.id, message_id=processing_msg.message_id, reply_markup=markup, parse_mode='Markdown')
@@ -768,6 +785,15 @@ def handle_photo(message):
     if message.chat.type in ['group', 'supergroup']: return
     user_id = message.from_user.id
     
+    ADMIN_ID = 6559589296
+    
+    # Limit tekshirish
+    if user_id != ADMIN_ID:
+        usage = database.get_daily_ai_usage(user_id)
+        if usage >= 3:
+            bot.reply_to(message, "❌ Sizning bugungi limitingiz tugadi. Ertaga fayl yoki rasmlaringizni qaytadan yuborib ko'ring.")
+            return
+            
     # API key mavjudligini tekshirish
     if not os.getenv('GEMINI_API_KEY'):
         text = (
@@ -804,8 +830,16 @@ def handle_photo(message):
         markup.row(InlineKeyboardButton("15 ta savol 📝", callback_data="ai_count_15"),
                    InlineKeyboardButton("20 ta savol 📝", callback_data="ai_count_20"))
         
+        limit_text = ""
+        if user_id != ADMIN_ID:
+            usage = database.get_daily_ai_usage(user_id)
+            limit_text = f"\n⚠️ *Eslatma: Siz bir kunda maksimal 3 tagacha fayl yoki rasm yubora olasiz. (Bugungi qolgan limitingiz: {3 - usage} ta)*\n"
+        else:
+            limit_text = f"\n⭐ *Siz uchun AI limiti cheksiz!*\n"
+            
         success_text = (
-            f"🖼 **Rasm muvaffaqiyatli qabul qilindi!**\n\n"
+            f"🖼 **Rasm muvaffaqiyatli qabul qilindi!**\n"
+            f"{limit_text}\n"
             f"Ushbu rasm/skrinshotdagi ma'lumotlar asosida nechta test savoli yaratmoqchisiz? Tanlang 👇"
         )
         bot.edit_message_text(success_text, chat_id=message.chat.id, message_id=processing_msg.message_id, reply_markup=markup, parse_mode='Markdown')
@@ -934,6 +968,9 @@ def generate_ai_quiz_thread(message, user_id, session, count):
                 
         conn.commit()
         conn.close()
+        
+        # Limit hisoblagichini oshirish
+        database.increment_daily_ai_usage(user_id)
         
         # Sessiyani tozalash
         if user_id in ai_sessions:
