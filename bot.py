@@ -78,6 +78,7 @@ bot.set_my_commands([
     telebot.types.BotCommand('/newquiz',      '➕ Yangi test yaratish'),
     telebot.types.BotCommand('/add_questions','📝 Testga savol qo\'shish'),
     telebot.types.BotCommand('/stop',         '🛑 Jarayonni to\'xtatish'),
+    telebot.types.BotCommand('/stat',         '📊 Statistika'),
 ])
 
 database.init_db()
@@ -86,6 +87,29 @@ database.init_db()
 user_sessions = {} # Test yaratish uchun
 taking_quiz_sessions = {} # Yakkaxon test yechish uchun
 group_sessions = {} # Guruhda test yechish uchun
+
+def is_user_admin_or_starter(chat_id, user_id, starter_id):
+    if user_id == starter_id:
+        return True
+    try:
+        member = bot.get_chat_member(chat_id, user_id)
+        if member.status in ['administrator', 'creator']:
+            return True
+    except Exception as e:
+        print(f"Error checking chat member: {e}")
+    return False
+
+def is_group_quiz_active_and_intercept(message):
+    chat_id = message.chat.id
+    if message.chat.type in ['group', 'supergroup'] and chat_id in group_sessions:
+        if message.text:
+            first_word = message.text.split()[0].lower()
+            command = first_word.split('@')[0]
+            if command == '/stop':
+                return False
+        bot.reply_to(message, "⚠️ Guruhda hozirda faol test ketmoqda! Uni faqat guruh adminlari yoki boshlagan odam /stop orqali to'xtata oladi.")
+        return True
+    return False
 
 def get_current_quiz_id(user_id):
     session = user_sessions.get(user_id)
@@ -120,6 +144,8 @@ def get_main_keyboard():
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
+    if is_group_quiz_active_and_intercept(message):
+        return
     chat_type = message.chat.type
     text = message.text.split()
     payload = text[1] if len(text) > 1 else None
@@ -129,7 +155,7 @@ def send_welcome(message):
         if payload and payload.startswith('quiz_'):
             try:
                 quiz_id = int(payload.split('_')[1])
-                init_group_quiz(message.chat.id, quiz_id)
+                init_group_quiz(message.chat.id, quiz_id, message.from_user.id)
             except (IndexError, ValueError):
                 bot.send_message(message.chat.id, "Xato link formatı.")
         return
@@ -285,8 +311,7 @@ def handle_question_timeout(user_id, q_index):
         session['current_q_index'] += 1
         send_next_question(user_id, session['chat_id'])
 
-# --- GURUHDA TEST YECHISH ---
-def init_group_quiz(chat_id, quiz_id):
+def init_group_quiz(chat_id, quiz_id, starter_id):
     conn = sqlite3.connect(database.DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT title FROM quizzes WHERE quiz_id = ?", (quiz_id,))
@@ -313,7 +338,8 @@ def init_group_quiz(chat_id, quiz_id):
         'participants': {},
         'status': 'waiting',
         'current_poll_id': None,
-        'correct_option_id': None
+        'correct_option_id': None,
+        'starter_id': starter_id
     }
     
     markup = InlineKeyboardMarkup()
@@ -356,7 +382,9 @@ def handle_group_callbacks(call):
         bot.edit_message_text(f"🚀 **{session['title']}** testi boshlandi!\nDiqqat qiling, savollar kelmoqda...", chat_id=chat_id, message_id=session['message_id'], parse_mode='Markdown')
         bot.answer_callback_query(call.id, "Test boshlandi!")
         
-        threading.Timer(3.0, send_next_group_question, args=[chat_id]).start()
+        timer = threading.Timer(3.0, send_next_group_question, args=[chat_id])
+        session['timer'] = timer
+        timer.start()
 
 def send_next_group_question(chat_id):
     session = group_sessions.get(chat_id)
@@ -386,9 +414,13 @@ def send_next_group_question(chat_id):
         session['correct_option_id'] = correct_id
         session['current_q_index'] += 1
         
-        threading.Timer(t_limit + 1.0, send_next_group_question, args=[chat_id]).start()
+        timer = threading.Timer(t_limit + 1.0, send_next_group_question, args=[chat_id])
+        session['timer'] = timer
+        timer.start()
     else:
         session['status'] = 'finished'
+        if 'timer' in session and session['timer']:
+            session['timer'].cancel()
         participants = session['participants'].values()
         sorted_p = sorted(participants, key=lambda x: x['score'], reverse=True)
         
@@ -442,6 +474,8 @@ def handle_poll_answer(poll_answer):
 # --- TEST YARATISH ---
 @bot.message_handler(commands=['newquiz'])
 def create_new_quiz(message):
+    if is_group_quiz_active_and_intercept(message):
+        return
     if message.chat.type in ['group', 'supergroup']:
         bot.reply_to(message, "Testni faqat shaxsiy chatda yaratish mumkin.")
         return
@@ -451,6 +485,8 @@ def create_new_quiz(message):
 
 @bot.message_handler(commands=['fix_my_id'])
 def fix_id(message):
+    if is_group_quiz_active_and_intercept(message):
+        return
     user_id = message.from_user.id
     # Bazadagi Muhammadyusuf ID-si: 6559589296
     old_id = 6559589296
@@ -459,27 +495,64 @@ def fix_id(message):
 
 @bot.message_handler(commands=['debug_me'])
 def debug_me(message):
+    if is_group_quiz_active_and_intercept(message):
+        return
     user_id = message.from_user.id
     my_quizzes = database.get_my_quizzes(user_id)
     all_quizzes = database.get_all_quizzes()
+    total_users = database.get_users_count()
+    total_results = database.get_results_count()
     text = (
         f"🔍 **DEBUG MA'LUMOTLARI:**\n"
         f"Sizning ID: `{user_id}`\n"
         f"Sizning testlaringiz soni: {len(my_quizzes)}\n"
         f"Bazadagi jami testlar soni: {len(all_quizzes)}\n"
+        f"Jami foydalanuvchilar soni: {total_users} ta\n"
+        f"Jami yechilgan testlar soni: {total_results} ta\n"
         f"Baza fayli: `{database.DB_PATH}`\n"
     )
     bot.reply_to(message, text, parse_mode='Markdown')
 
+@bot.message_handler(commands=['stat', 'stats'])
+def show_statistics(message):
+    if is_group_quiz_active_and_intercept(message):
+        return
+    try:
+        total_users = database.get_users_count()
+        total_quizzes = len(database.get_all_quizzes())
+        total_results = database.get_results_count()
+        
+        stat_text = (
+            "📊 **BOT STATISTIKASI:**\n\n"
+            f"👥 **Jami foydalanuvchilar:** {total_users} ta\n"
+            f"📂 **Jami yaratilgan testlar:** {total_quizzes} ta\n"
+            f"🏁 **Jami yechilgan testlar:** {total_results} marta\n"
+        )
+        bot.reply_to(message, stat_text, parse_mode='Markdown')
+    except Exception as e:
+        bot.reply_to(message, f"Statistikani yuklashda xatolik: {e}")
+
 @bot.message_handler(commands=['add_questions'])
 def add_more_questions(message):
+    if is_group_quiz_active_and_intercept(message):
+        return
     if message.chat.type in ['group', 'supergroup']: return
     user_id = message.from_user.id
     quiz_id = get_current_quiz_id(user_id)
     
     if quiz_id:
         database.set_user_state(user_id, 'waiting_for_questions')
-        bot.reply_to(message, "OK! Oxirgi yaratgan testingizga yana savollar qo'shishingiz mumkin. Savollarni (Poll) yuboravering.\n\nTugatganingizdan so'ng yana «Tugatish» tugmasini bosing.", reply_markup=get_question_keyboard())
+        
+        # Get title and count
+        conn = sqlite3.connect(database.DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT title FROM quizzes WHERE quiz_id = ?", (quiz_id,))
+        quiz_title = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM questions WHERE quiz_id = ?", (quiz_id,))
+        count = cursor.fetchone()[0]
+        conn.close()
+        
+        bot.reply_to(message, f"OK! Oxirgi yaratgan \"{quiz_title}\" testingizga yana savollar qo'shishingiz mumkin (hozirda {count} ta savol bor). Savollarni (Poll) yuboravering.\n\nTugatganingizdan so'ng yana «Tugatish» tugmasini bosing.", reply_markup=get_question_keyboard())
     else:
         bot.reply_to(message, "Sizda hali yaratilgan test yo'q.")
 
@@ -488,19 +561,29 @@ def stop_process(message):
     chat_id = message.chat.id
     user_id = message.from_user.id
     
-    # 1. Yakkaxon testni to'xtatish
+    # 1. Guruh testini to'xtatish
+    if message.chat.type in ['group', 'supergroup']:
+        if chat_id in group_sessions:
+            session = group_sessions[chat_id]
+            starter_id = session.get('starter_id')
+            if is_user_admin_or_starter(chat_id, user_id, starter_id):
+                if 'timer' in session and session['timer']:
+                    session['timer'].cancel()
+                del group_sessions[chat_id]
+                bot.send_message(chat_id, "🛑 Guruhdagi test to'xtatildi.", reply_markup=ReplyKeyboardRemove())
+            else:
+                bot.reply_to(message, "⚠️ Testni faqat adminlar yoki testni boshlagan odam to'xtata oladi!")
+        else:
+            bot.send_message(chat_id, "Hozircha hech qanday faol jarayon yo'q.")
+        return
+
+    # 2. Yakkaxon testni to'xtatish
     if user_id in taking_quiz_sessions:
         session = taking_quiz_sessions[user_id]
         if 'timer' in session and session['timer']:
             session['timer'].cancel()
         del taking_quiz_sessions[user_id]
         bot.send_message(chat_id, "🛑 Yakkaxon test to'xtatildi.", reply_markup=ReplyKeyboardRemove())
-        return
-
-    # 2. Guruh testini to'xtatish
-    if chat_id in group_sessions:
-        del group_sessions[chat_id]
-        bot.send_message(chat_id, "🛑 Guruhdagi test to'xtatildi.", reply_markup=ReplyKeyboardRemove())
         return
 
     # 3. Test yaratishni to'xtatish
@@ -514,6 +597,8 @@ def stop_process(message):
 
 @bot.message_handler(commands=['done'])
 def finish_quiz_cmd(message):
+    if is_group_quiz_active_and_intercept(message):
+        return
     if message.chat.type in ['group', 'supergroup']: return
     ask_for_time_limit(message)
 
@@ -587,6 +672,13 @@ def set_quiz_shuffle(call):
             conn = sqlite3.connect(database.DB_PATH)
             cursor = conn.cursor()
             cursor.execute("UPDATE quizzes SET shuffle_mode = ? WHERE quiz_id = ?", (shuffle_mode, quiz_id))
+            
+            # Fetch the total number of questions and quiz title
+            cursor.execute("SELECT title FROM quizzes WHERE quiz_id = ?", (quiz_id,))
+            quiz_title = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM questions WHERE quiz_id = ?", (quiz_id,))
+            count = cursor.fetchone()[0]
+            
             conn.commit()
             conn.close()
             
@@ -600,7 +692,13 @@ def set_quiz_shuffle(call):
             markup.add(InlineKeyboardButton("Guruhda yechish 👥", url=group_url))
             markup.add(InlineKeyboardButton("Do'stlarga ulashish ↗️", url=f"https://t.me/share/url?url={start_url}"))
             
-            bot.edit_message_text(f"✅ Test muvaffaqiyatli yaratildi va saqlandi!\n\nQuyidagi tugmalar orqali testni o'zingiz yechishingiz yoki guruhlarga yuborishingiz mumkin:", 
+            success_text = (
+                f"✅ Test muvaffaqiyatli yaratildi va saqlandi!\n\n"
+                f"Sizning ushbu \"{quiz_title}\" testingizda {count} ta test (savol) bo'ldi. 🎉\n\n"
+                f"Quyidagi tugmalar orqali testni o'zingiz yechishingiz yoki guruhlarga yuborishingiz mumkin:"
+            )
+            
+            bot.edit_message_text(success_text, 
                                   chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
             bot.answer_callback_query(call.id, "Aralashtirish rejimi saqlandi!")
         else:
@@ -610,13 +708,15 @@ def set_quiz_shuffle(call):
 
 @bot.message_handler(commands=['skip'])
 def skip_description(message):
+    if is_group_quiz_active_and_intercept(message):
+        return
     if message.chat.type in ['group', 'supergroup']: return
     user_id = message.from_user.id
     state = database.get_user_state(user_id)
     
     if state == 'waiting_for_description':
         database.set_user_state(user_id, 'waiting_for_questions')
-        text = "Izoh o'tkazib yuborildi.\n\nEndi test uchun savollarni yuboring. Pastdagi **«Savol yaratish»** tugmasini bosing va o'z savolingizni tayyorlang.\n\n⚠️ **Muhim:** Android telefonlarda xatolik (qizil undov) chiqmasligi uchun savol yaratayotganda **«Anonim viktorina» (Анонимное голосование)** belgisini o'chirib qo'ying!\n\nBarcha savollarni yuborib bo'lgach, **«Tugatish»** tugmasini bosing."
+        text = "Izoh o'tkazib yuborildi.\n\nEndi test uchun savollarni yuboring. Pastdagi **«Savol yaratish»** tugmasini bosing va o'z savolingizni tayyorlang.\n\nBarcha savollarni yuborib bo'lgach, **«Tugatish»** tugmasini bosing."
         bot.reply_to(message, text, reply_markup=get_question_keyboard())
 
 @bot.message_handler(content_types=['text'])
@@ -641,7 +741,7 @@ def handle_text(message):
         conn.commit()
         conn.close()
         database.set_user_state(user_id, 'waiting_for_questions')
-        text = "Izoh saqlandi.\n\nEndi test uchun savollarni yuboring. Pastdagi **«Savol yaratish»** tugmasini bosing va o'z savolingizni tayyorlang.\n\n⚠️ **Muhim:** Android telefonlarda xatolik (qizil undov) chiqmasligi uchun savol yaratayotganda **«Anonim viktorina» (Анонимное голосование)** belgisini o'chirib qo'ying!\n\nBarcha savollarni yuborib bo'lgach, **«Tugatish»** tugmasini bosing."
+        text = "Izoh saqlandi.\n\nEndi test uchun savollarni yuboring. Pastdagi **«Savol yaratish»** tugmasini bosing va o'z savolingizni tayyorlang.\n\nBarcha savollarni yuborib bo'lgach, **«Tugatish»** tugmasini bosing."
         bot.reply_to(message, text, reply_markup=get_question_keyboard())
     elif message.text == '➕ Yangi test yaratish':
         create_new_quiz(message)
@@ -701,9 +801,75 @@ def handle_poll(message):
             VALUES (?, ?, ?, ?, ?)
         """, (quiz_id, question_text, options, correct_option_id, explanation))
         conn.commit()
+        
+        # Get title and count
+        cursor.execute("SELECT title FROM quizzes WHERE quiz_id = ?", (quiz_id,))
+        quiz_title = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM questions WHERE quiz_id = ?", (quiz_id,))
+        count = cursor.fetchone()[0]
         conn.close()
         
-        bot.reply_to(message, "✅ Savol qabul qilindi! Keyingi savolni yaratish uchun yana **«Savol yaratish»** tugmasini bosing yoki tugatish uchun **«Tugatish»** tugmasini bosing.", reply_markup=get_question_keyboard())
+        response_text = (
+            f"Yaxshi. \"{quiz_title}\" testingizda hozirda {count} ta savol bor. "
+            "Agar oxirgi savolda xatoga yo'l qo'ygan bo'lsangiz, /undo buyrug'ini yuborish orqali orqaga qaytarishingiz mumkin.\n\n"
+            "Keyingi savolni yaratish uchun yana **«Savol yaratish»** tugmasini bosing yoki tugatish uchun **«Tugatish»** tugmasini bosing."
+        )
+        bot.reply_to(message, response_text, reply_markup=get_question_keyboard())
+
+@bot.message_handler(commands=['undo'])
+def undo_last_question(message):
+    if is_group_quiz_active_and_intercept(message):
+        return
+    if message.chat.type in ['group', 'supergroup']: return
+    user_id = message.from_user.id
+    state = database.get_user_state(user_id)
+    
+    if state != 'waiting_for_questions':
+        bot.reply_to(message, "Siz hozir savol qo'shish jarayonida emassiz.")
+        return
+        
+    quiz_id = get_current_quiz_id(user_id)
+    if not quiz_id:
+        bot.reply_to(message, "Yaratilayotgan test topilmadi.")
+        return
+        
+    conn = sqlite3.connect(database.DB_PATH)
+    cursor = conn.cursor()
+    
+    # Get quiz title
+    cursor.execute("SELECT title FROM quizzes WHERE quiz_id = ?", (quiz_id,))
+    quiz_res = cursor.fetchone()
+    if not quiz_res:
+        conn.close()
+        bot.reply_to(message, "Test topilmadi.")
+        return
+    quiz_title = quiz_res[0]
+    
+    # Get the last question
+    cursor.execute("SELECT question_id, question_text FROM questions WHERE quiz_id = ? ORDER BY question_id DESC LIMIT 1", (quiz_id,))
+    q_res = cursor.fetchone()
+    
+    if not q_res:
+        conn.close()
+        bot.reply_to(message, f"\"{quiz_title}\" testingizda hali hech qanday savol yo'q, shuning uchun /undo qilib bo'lmaydi.")
+        return
+        
+    q_id, q_text = q_res
+    cursor.execute("DELETE FROM questions WHERE question_id = ?", (q_id,))
+    conn.commit()
+    
+    # Get the new count
+    cursor.execute("SELECT COUNT(*) FROM questions WHERE quiz_id = ?", (quiz_id,))
+    new_count = cursor.fetchone()[0]
+    conn.close()
+    
+    response_text = (
+        f"🗑 Oxirgi savol muvaffaqiyatli o'chirildi!\n"
+        f"O'chirilgan savol: \"{q_text}\"\n\n"
+        f"Hozirda \"{quiz_title}\" testingizda {new_count} ta savol qoldi.\n"
+        f"Yangi savol yaratish uchun pastdagi **«Savol yaratish»** tugmasini bosing."
+    )
+    bot.reply_to(message, response_text, reply_markup=get_question_keyboard())
 
 # --- AI ORQALI TEST YARATISH (Fayl va Rasmlar) ---
 
