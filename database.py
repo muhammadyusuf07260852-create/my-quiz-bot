@@ -16,9 +16,15 @@ def init_db():
         user_id INTEGER PRIMARY KEY,
         username TEXT,
         first_name TEXT,
-        state TEXT DEFAULT 'none'
+        state TEXT DEFAULT 'none',
+        language TEXT DEFAULT 'uz'
     )
     ''')
+    
+    try:
+        cursor.execute("ALTER TABLE users ADD COLUMN language TEXT DEFAULT 'uz'")
+    except sqlite3.OperationalError:
+        pass
 
     # Quizzes table
     cursor.execute('''
@@ -160,6 +166,22 @@ def increment_daily_ai_usage(user_id):
     cursor.execute("INSERT OR REPLACE INTO ai_usage (user_id, usage_date, request_count) VALUES (?, ?, COALESCE((SELECT request_count FROM ai_usage WHERE user_id = ? AND usage_date = ?), 0) + 1)", (user_id, today, user_id, today))
     conn.commit()
     conn.close()
+
+def get_users_count():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM users")
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count
+
+def get_results_count():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM results")
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count
 
 if __name__ == "__main__":
     init_db()
