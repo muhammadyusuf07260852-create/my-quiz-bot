@@ -79,6 +79,7 @@ bot.set_my_commands([
     telebot.types.BotCommand('/add_questions','📝 Testga savol qo\'shish'),
     telebot.types.BotCommand('/stop',         '🛑 Jarayonni to\'xtatish'),
     telebot.types.BotCommand('/stat',         '📊 Statistika'),
+    telebot.types.BotCommand('/language',     '🌐 Tilni o\'zgartirish'),
 ])
 
 database.init_db()
@@ -1252,6 +1253,14 @@ def set_quiz_shuffle(call):
             bot.answer_callback_query(call.id, "Xatolik yuz berdi.")
     else:
         bot.answer_callback_query(call.id, "Bu tugma hozir ishlamaydi.")
+
+@bot.message_handler(commands=['language'])
+def command_change_language(message):
+    if is_group_quiz_active_and_intercept(message):
+        return
+    user_id = message.from_user.id
+    lang = get_user_language(user_id)
+    bot.reply_to(message, T['choose_language'].get(lang, T['choose_language']['uz']), reply_markup=get_language_keyboard())
 
 @bot.message_handler(commands=['skip'])
 def skip_description(message):
