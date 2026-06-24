@@ -11,6 +11,8 @@ import docx
 import pypdf
 from pptx import Presentation
 import google.generativeai as genai
+import base64
+import requests
 
 def extract_text_from_pptx(file_path):
     try:
@@ -44,6 +46,288 @@ if GEMINI_API_KEY:
 
 # AI vaqtinchalik sessiyalari
 ai_sessions = {}
+
+def is_ai_available():
+    keys = ['GEMINI_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'DEEPSEEK_API_KEY', 'GROK_API_KEY']
+    placeholders = ['YOUR_GEMINI_KEY', 'YOUR_OPENAI_KEY', 'YOUR_CLAUDE_KEY', 'YOUR_DEEPSEEK_KEY', 'YOUR_GROK_KEY']
+    for k, p in zip(keys, placeholders):
+        val = os.getenv(k)
+        if val and val != p:
+            return True
+    return False
+
+def generate_quiz_via_ai(session, prompt):
+    """
+    Attempts to generate quiz JSON using available AI APIs in order:
+    1. Gemini
+    2. OpenAI GPT
+    3. Anthropic Claude
+    4. DeepSeek Chat
+    5. Grok 2
+    
+    Returns:
+        str: Raw JSON response text from the successful AI model.
+    Raises:
+        Exception: If all attempted APIs fail or no API key is configured.
+    """
+    errors = []
+    
+    # 1. Gemini
+    gemini_key = os.getenv('GEMINI_API_KEY')
+    if gemini_key and gemini_key != "YOUR_GEMINI_KEY":
+        try:
+            print("AI: Gemini modeliga so'rov yuborilmoqda...")
+            model = genai.GenerativeModel("gemini-2.5-flash")
+            
+            if session['type'] == 'text':
+                full_content = f"Hujjat nomi: {session['file_name']}\n\nHujjat matni:\n{session['data']}"
+                if len(full_content) > 60000:
+                    full_content = full_content[:60000] + "\n...[Matn juda uzunligi uchun kesildi]..."
+                response = model.generate_content(
+                    [prompt, full_content],
+                    generation_config={"response_mime_type": "application/json"}
+                )
+            else:
+                image_part = {
+                    "mime_type": "image/jpeg",
+                    "data": session['data']
+                }
+                response = model.generate_content(
+                    [prompt, image_part],
+                    generation_config={"response_mime_type": "application/json"}
+                )
+            
+            text = response.text.strip()
+            if text:
+                print("AI: Gemini muvaffaqiyatli javob qaytardi.")
+                return text
+            else:
+                raise Exception("Gemini bo'sh javob qaytardi.")
+        except Exception as e:
+            err_msg = f"Gemini xatoligi: {e}"
+            print(err_msg)
+            errors.append(err_msg)
+            
+    # 2. OpenAI GPT
+    openai_key = os.getenv('OPENAI_API_KEY')
+    if openai_key and openai_key != "YOUR_OPENAI_KEY":
+        try:
+            print("AI: OpenAI modeliga so'rov yuborilmoqda...")
+            headers = {
+                "Authorization": f"Bearer {openai_key}",
+                "Content-Type": "application/json"
+            }
+            
+            if session['type'] == 'text':
+                full_content = f"Hujjat nomi: {session['file_name']}\n\nHujjat matni:\n{session['data']}"
+                if len(full_content) > 60000:
+                    full_content = full_content[:60000] + "\n...[Matn juda uzunligi uchun kesildi]..."
+                messages = [
+                    {"role": "system", "content": "Siz ko'p variantli test savollari yaratuvchi yordamchisiz. Javobingizni faqat taqdim etilgan struktura bo'yicha JSON formatida yuboring. Hech qanday markdown belgilari (masalan ```json) qo'shmang."},
+                    {"role": "user", "content": f"{prompt}\n\nTahlil qilinadigan matn:\n{full_content}"}
+                ]
+            else:
+                base64_image = base64.b64encode(session['data']).decode('utf-8')
+                messages = [
+                    {"role": "system", "content": "Siz ko'p variantli test savollari yaratuvchi yordamchisiz. Javobingizni faqat taqdim etilgan struktura bo'yicha JSON formatida yuboring. Hech qanday markdown belgilari (masalan ```json) qo'shmang."},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{base64_image}"
+                                }
+                            }
+                        ]
+                    }
+                ]
+                
+            payload = {
+                "model": "gpt-4o-mini",
+                "messages": messages,
+                "response_format": {"type": "json_object"}
+            }
+            
+            response = requests.post("https://api.openai.com/v1/chat/completions", json=payload, headers=headers, timeout=60)
+            response.raise_for_status()
+            res_data = response.json()
+            text = res_data["choices"][0]["message"]["content"].strip()
+            if text:
+                print("AI: OpenAI muvaffaqiyatli javob qaytardi.")
+                return text
+            else:
+                raise Exception("OpenAI bo'sh javob qaytardi.")
+        except Exception as e:
+            err_msg = f"OpenAI xatoligi: {e}"
+            print(err_msg)
+            errors.append(err_msg)
+            
+    # 3. Anthropic Claude
+    anthropic_key = os.getenv('ANTHROPIC_API_KEY')
+    if anthropic_key and anthropic_key != "YOUR_CLAUDE_KEY":
+        try:
+            print("AI: Anthropic Claude modeliga so'rov yuborilmoqda...")
+            headers = {
+                "x-api-key": anthropic_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json"
+            }
+            
+            if session['type'] == 'text':
+                full_content = f"Hujjat nomi: {session['file_name']}\n\nHujjat matni:\n{session['data']}"
+                if len(full_content) > 60000:
+                    full_content = full_content[:60000] + "\n...[Matn juda uzunligi uchun kesildi]..."
+                messages = [
+                    {"role": "user", "content": f"{prompt}\n\nTahlil qilinadigan matn:\n{full_content}"}
+                ]
+            else:
+                base64_image = base64.b64encode(session['data']).decode('utf-8')
+                messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": "image/jpeg",
+                                    "data": base64_image
+                                }
+                            },
+                            {
+                                "type": "text",
+                                "text": prompt
+                            }
+                        ]
+                    }
+                ]
+                
+            payload = {
+                "model": "claude-3-5-sonnet-20241022",
+                "max_tokens": 4000,
+                "system": "Siz ko'p variantli test savollari yaratuvchi yordamchisiz. Javobingizni faqat taqdim etilgan struktura bo'yicha toza JSON formatida yuboring. Hech qanday markdown belgilari (masalan ```json) yoki qo'shimcha tushuntirish matni yozmang, faqat raw JSON matn yuboring.",
+                "messages": messages
+            }
+            
+            response = requests.post("https://api.anthropic.com/v1/messages", json=payload, headers=headers, timeout=60)
+            response.raise_for_status()
+            res_data = response.json()
+            text = res_data["content"][0]["text"].strip()
+            if text:
+                print("AI: Anthropic Claude muvaffaqiyatli javob qaytardi.")
+                return text
+            else:
+                raise Exception("Anthropic Claude bo'sh javob qaytardi.")
+        except Exception as e:
+            err_msg = f"Anthropic Claude xatoligi: {e}"
+            print(err_msg)
+            errors.append(err_msg)
+
+    # 4. DeepSeek
+    deepseek_key = os.getenv('DEEPSEEK_API_KEY')
+    if deepseek_key and deepseek_key != "YOUR_DEEPSEEK_KEY":
+        if session['type'] == 'image':
+            print("AI: DeepSeek rasm tahlil qilishni qo'llab-quvvatlamaydi. O'tkazib yuborilmoqda...")
+        else:
+            try:
+                print("AI: DeepSeek modeliga so'rov yuborilmoqda...")
+                headers = {
+                    "Authorization": f"Bearer {deepseek_key}",
+                    "Content-Type": "application/json"
+                }
+                
+                full_content = f"Hujjat nomi: {session['file_name']}\n\nHujjat matni:\n{session['data']}"
+                if len(full_content) > 60000:
+                    full_content = full_content[:60000] + "\n...[Matn juda uzunligi uchun kesildi]..."
+                
+                messages = [
+                    {"role": "system", "content": "Siz ko'p variantli test savollari yaratuvchi yordamchisiz. Javobingizni faqat taqdim etilgan struktura bo'yicha JSON formatida yuboring. Hech qanday markdown belgilari (masalan ```json) qo'shmang."},
+                    {"role": "user", "content": f"{prompt}\n\nTahlil qilinadigan matn:\n{full_content}"}
+                ]
+                
+                payload = {
+                    "model": "deepseek-chat",
+                    "messages": messages,
+                    "response_format": {"type": "json_object"}
+                }
+                
+                response = requests.post("https://api.deepseek.com/chat/completions", json=payload, headers=headers, timeout=60)
+                response.raise_for_status()
+                res_data = response.json()
+                text = res_data["choices"][0]["message"]["content"].strip()
+                if text:
+                    print("AI: DeepSeek muvaffaqiyatli javob qaytardi.")
+                    return text
+                else:
+                    raise Exception("DeepSeek bo'sh javob qaytardi.")
+            except Exception as e:
+                err_msg = f"DeepSeek xatoligi: {e}"
+                print(err_msg)
+                errors.append(err_msg)
+
+    # 5. Grok
+    grok_key = os.getenv('GROK_API_KEY')
+    if grok_key and grok_key != "YOUR_GROK_KEY":
+        try:
+            print("AI: Grok modeliga so'rov yuborilmoqda...")
+            headers = {
+                "Authorization": f"Bearer {grok_key}",
+                "Content-Type": "application/json"
+            }
+            
+            if session['type'] == 'text':
+                full_content = f"Hujjat nomi: {session['file_name']}\n\nHujjat matni:\n{session['data']}"
+                if len(full_content) > 60000:
+                    full_content = full_content[:60000] + "\n...[Matn juda uzunligi uchun kesildi]..."
+                messages = [
+                    {"role": "system", "content": "Siz ko'p variantli test savollari yaratuvchi yordamchisiz. Javobingizni faqat taqdim etilgan struktura bo'yicha JSON formatida yuboring. Hech qanday markdown belgilari (masalan ```json) qo'shmang."},
+                    {"role": "user", "content": f"{prompt}\n\nTahlil qilinadigan matn:\n{full_content}"}
+                ]
+            else:
+                base64_image = base64.b64encode(session['data']).decode('utf-8')
+                messages = [
+                    {"role": "system", "content": "Siz ko'p variantli test savollari yaratuvchi yordamchisiz. Javobingizni faqat taqdim etilgan struktura bo'yicha JSON formatida yuboring. Hech qanday markdown belgilari (masalan ```json) qo'shmang."},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{base64_image}"
+                                }
+                            }
+                        ]
+                    }
+                ]
+                
+            payload = {
+                "model": "grok-2-1212",
+                "messages": messages,
+                "response_format": {"type": "json_object"}
+            }
+            
+            response = requests.post("https://api.x.ai/v1/chat/completions", json=payload, headers=headers, timeout=60)
+            response.raise_for_status()
+            res_data = response.json()
+            text = res_data["choices"][0]["message"]["content"].strip()
+            if text:
+                print("AI: Grok muvaffaqiyatli javob qaytardi.")
+                return text
+            else:
+                raise Exception("Grok bo'sh javob qaytardi.")
+        except Exception as e:
+            err_msg = f"Grok xatoligi: {e}"
+            print(err_msg)
+            errors.append(err_msg)
+            
+    # Hamma urinishlar tugasa
+    if not errors:
+        raise Exception("Birorta ham AI API kaliti (GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, GROK_API_KEY) .env faylida sozlanmagan!")
+    else:
+        raise Exception("Barcha AI provayderlari xatolik berdi:\n" + "\n".join(errors))
 
 def extract_text_from_pdf(file_path):
     try:
@@ -603,12 +887,12 @@ def get_question_keyboard(lang='uz'):
 def get_main_keyboard(lang='uz'):
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     labels = {
-        'uz': ('➕ Yangi test yaratish', '📂 Mening testlarim', '📊 Natijalar', '🌐 Tilni o\'zgartirish'),
-        'en': ('➕ Create New Quiz', '📂 My Quizzes', '📊 Results', '🌐 Change Language'),
-        'ru': ('➕ Создать новый тест', '📂 Мои тесты', '📊 Результаты', '🌐 Сменить язык'),
-        'tr': ('➕ Yeni Test Oluştur', '📂 Testlerim', '📊 Sonuçlar', '🌐 Dili Değiştir'),
-        'de': ('➕ Neuen Test erstellen', '📂 Meine Tests', '📊 Ergebnisse', '🌐 Sprache ändern'),
-        'ar': ('➕ إنشاء اختبار جديد', '📂 اختباراتي', '📊 النتائج', '🌐 تغيير اللغة')
+        'uz': ('➕ Yangi test yaratish', '📁 Mening testlarim', '📊 Natijalar', '🌐 Tilni tanlash'),
+        'en': ('➕ Create New Quiz', '📁 My Quizzes', '📊 Results', '🌐 Select Language'),
+        'ru': ('➕ Создать новый тест', '📁 Мои тесты', '📊 Результаты', '🌐 Выбрать язык'),
+        'tr': ('➕ Yeni Test Oluştur', '📁 Testlerim', '📊 Sonuçlar', '🌐 Dili Seç'),
+        'de': ('➕ Neuen Test erstellen', '📁 Meine Tests', '📊 Ergebnisse', '🌐 Sprache wählen'),
+        'ar': ('➕ إنشاء اختبار جديد', '📁 اختباراتي', '📊 النتائج', '🌐 اختيار اللغة')
     }
     lbl_new, lbl_my, lbl_results, lbl_lang = labels.get(lang, labels['uz'])
     btn_new = KeyboardButton(lbl_new)
@@ -1278,12 +1562,12 @@ def skip_description(message):
 
 def get_button_type(text):
     labels = {
-        'uz': ('➕ Yangi test yaratish', '📂 Mening testlarim', '📊 Natijalar', '🌐 Tilni o\'zgartirish'),
-        'en': ('➕ Create New Quiz', '📂 My Quizzes', '📊 Results', '🌐 Change Language'),
-        'ru': ('➕ Создать новый тест', '📂 Мои тесты', '📊 Результаты', '🌐 Сменить язык'),
-        'tr': ('➕ Yeni Test Oluştur', '📂 Testlerim', '📊 Sonuçlar', '🌐 Dili Değiştir'),
-        'de': ('➕ Neuen Test erstellen', '📂 Meine Tests', '📊 Ergebnisse', '🌐 Sprache ändern'),
-        'ar': ('➕ إنشاء اختبار جديد', '📂 اختباراتي', '📊 النتائج', '🌐 تغيير اللغة')
+        'uz': ('➕ Yangi test yaratish', '📁 Mening testlarim', '📊 Natijalar', '🌐 Tilni tanlash'),
+        'en': ('➕ Create New Quiz', '📁 My Quizzes', '📊 Results', '🌐 Select Language'),
+        'ru': ('➕ Создать новый тест', '📁 Мои тесты', '📊 Результаты', '🌐 Выбрать язык'),
+        'tr': ('➕ Yeni Test Oluştur', '📁 Testlerim', '📊 Sonuçlar', '🌐 Dili Seç'),
+        'de': ('➕ Neuen Test erstellen', '📁 Meine Tests', '📊 Ergebnisse', '🌐 Sprache wählen'),
+        'ar': ('➕ إنشاء اختبار جديد', '📁 اختباراتي', '📊 النتائج', '🌐 اختيار اللغة')
     }
     for lang, (new_quiz, my_quizzes, results, change_lang) in labels.items():
         if text == new_quiz: return 'new_quiz'
@@ -1459,19 +1743,22 @@ def handle_document(message):
     # Limit tekshirish
     if user_id != ADMIN_ID:
         usage = database.get_daily_ai_usage(user_id)
-        if usage >= 3:
+        if usage >= 4:
             bot.reply_to(message, "❌ Sizning bugungi limitingiz tugadi. Ertaga fayl yoki rasmlaringizni qaytadan yuborib ko'ring.")
             return
             
     # API key mavjudligini tekshirish
-    if not os.getenv('GEMINI_API_KEY'):
+    if not is_ai_available():
         text = (
             "⚠️ **AI Quiz funksiyasi faol emas!**\n\n"
-            "Ushbu funksiyadan foydalanish uchun bot egasi `.env` fayliga `GEMINI_API_KEY` kalitini qo'shishi kerak.\n\n"
-            "🔑 **Kalitni qanday olish mumkin?**\n"
-            "1. https://aistudio.google.com/ saytiga kiring.\n"
-            "2. Bepul **Gemini API Key** oling.\n"
-            "3. Botning `.env` fayliga yozing:\n"
+            "Ushbu funksiyadan foydalanish uchun bot egasi `.env` fayliga kamida bitta AI API kalitini qo'shishi kerak.\n\n"
+            "🔑 **Qo'shish mumkin bo'lgan kalitlar:**\n"
+            "1. **Gemini API Key** (`GEMINI_API_KEY`)\n"
+            "2. **OpenAI API Key** (`OPENAI_API_KEY`)\n"
+            "3. **Anthropic API Key** (`ANTHROPIC_API_KEY`)\n"
+            "4. **DeepSeek API Key** (`DEEPSEEK_API_KEY`)\n"
+            "5. **Grok API Key** (`GROK_API_KEY`)\n\n"
+            "Misol `.env` sozlamasi:\n"
             "`GEMINI_API_KEY=sizning_kalitingiz`"
         )
         bot.reply_to(message, text, parse_mode='Markdown')
@@ -1533,9 +1820,7 @@ def handle_document(message):
         limit_text = ""
         if user_id != ADMIN_ID:
             usage = database.get_daily_ai_usage(user_id)
-            limit_text = f"\n⚠️ *Eslatma: Siz bir kunda maksimal 3 tagacha fayl yoki rasm yubora olasiz. (Bugungi qolgan limitingiz: {3 - usage} ta)*\n"
-        else:
-            limit_text = f"\n⭐ *Siz uchun AI limiti cheksiz!*\n"
+            limit_text = f"\n⚠️ *Eslatma: Siz bir kunda maksimal 4 tagacha fayl yoki rasm yubora olasiz. (Bugungi qolgan limitingiz: {4 - usage} ta)*\n"
             
         success_text = (
             f"📄 **Fayl muvaffaqiyatli o'qildi!**\n"
@@ -1560,19 +1845,22 @@ def handle_photo(message):
     # Limit tekshirish
     if user_id != ADMIN_ID:
         usage = database.get_daily_ai_usage(user_id)
-        if usage >= 3:
+        if usage >= 4:
             bot.reply_to(message, "❌ Sizning bugungi limitingiz tugadi. Ertaga fayl yoki rasmlaringizni qaytadan yuborib ko'ring.")
             return
             
     # API key mavjudligini tekshirish
-    if not os.getenv('GEMINI_API_KEY'):
+    if not is_ai_available():
         text = (
             "⚠️ **AI Quiz funksiyasi faol emas!**\n\n"
-            "Ushbu funksiyadan foydalanish uchun bot egasi `.env` fayliga `GEMINI_API_KEY` kalitini qo'shishi kerak.\n\n"
-            "🔑 **Kalitni qanday olish mumkin?**\n"
-            "1. https://aistudio.google.com/ saytiga kiring.\n"
-            "2. Bepul **Gemini API Key** oling.\n"
-            "3. Botning `.env` fayliga yozing:\n"
+            "Ushbu funksiyadan foydalanish uchun bot egasi `.env` fayliga kamida bitta AI API kalitini qo'shishi kerak.\n\n"
+            "🔑 **Qo'shish mumkin bo'lgan kalitlar:**\n"
+            "1. **Gemini API Key** (`GEMINI_API_KEY`)\n"
+            "2. **OpenAI API Key** (`OPENAI_API_KEY`)\n"
+            "3. **Anthropic API Key** (`ANTHROPIC_API_KEY`)\n"
+            "4. **DeepSeek API Key** (`DEEPSEEK_API_KEY`)\n"
+            "5. **Grok API Key** (`GROK_API_KEY`)\n\n"
+            "Misol `.env` sozlamasi:\n"
             "`GEMINI_API_KEY=sizning_kalitingiz`"
         )
         bot.reply_to(message, text, parse_mode='Markdown')
@@ -1605,9 +1893,7 @@ def handle_photo(message):
         limit_text = ""
         if user_id != ADMIN_ID:
             usage = database.get_daily_ai_usage(user_id)
-            limit_text = f"\n⚠️ *Eslatma: Siz bir kunda maksimal 3 tagacha fayl yoki rasm yubora olasiz. (Bugungi qolgan limitingiz: {3 - usage} ta)*\n"
-        else:
-            limit_text = f"\n⭐ *Siz uchun AI limiti cheksiz!*\n"
+            limit_text = f"\n⚠️ *Eslatma: Siz bir kunda maksimal 4 tagacha fayl yoki rasm yubora olasiz. (Bugungi qolgan limitingiz: {4 - usage} ta)*\n"
             
         success_text = (
             f"🖼 **Rasm muvaffaqiyatli qabul qilindi!**\n"
@@ -1682,8 +1968,6 @@ def generate_ai_quiz_thread(message, user_id, session, count, time_limit):
     message_id = message.message_id
     
     try:
-        model = genai.GenerativeModel("gemini-2.5-flash")
-        
         prompt = (
             f"Sizga taqdim etilgan matn yoki rasmdagi ma'lumotlardan foydalanib, roppa-rosa {count} ta "
             "ko'p variantli (multiple choice) test savollarini yarating. "
@@ -1707,27 +1991,8 @@ def generate_ai_quiz_thread(message, user_id, session, count, time_limit):
             "}"
         )
         
-        # Gemini modeliga so'rov yuborish
-        if session['type'] == 'text':
-            full_content = f"Hujjat nomi: {session['file_name']}\n\nHujjat matni:\n{session['data']}"
-            if len(full_content) > 60000:
-                full_content = full_content[:60000] + "\n...[Matn juda uzunligi uchun kesildi]..."
-                
-            response = model.generate_content(
-                [prompt, full_content],
-                generation_config={"response_mime_type": "application/json"}
-            )
-        else:
-            image_part = {
-                "mime_type": "image/jpeg",
-                "data": session['data']
-            }
-            response = model.generate_content(
-                [prompt, image_part],
-                generation_config={"response_mime_type": "application/json"}
-            )
-            
-        raw_text = response.text.strip()
+        # Ko'p modelli AI tizimi orqali so'rov yuborish
+        raw_text = generate_quiz_via_ai(session, prompt)
         
         # Agar rasm/matn mos kelmasa va xatolik bo'lsa
         if not raw_text:
@@ -1812,8 +2077,8 @@ def generate_ai_quiz_thread(message, user_id, session, count, time_limit):
         if "429" in error_msg or "Quota" in error_msg:
             user_msg = "❌ Kechirasiz, ayni vaqtda botga so'rovlar juda ko'payib ketdi (AI limiti tugadi). Iltimos, birozdan so'ng (1-2 daqiqa) qayta urinib ko'ring."
         else:
-            user_msg = "❌ Test yaratishda kutilmagan xatolik yuz berdi. Iltimos, qaytadan urinib ko'ring."
-        bot.edit_message_text(user_msg, chat_id=chat_id, message_id=message_id)
+            user_msg = f"❌ Test yaratishda xatolik yuz berdi:\n`{error_msg}`"
+        bot.edit_message_text(user_msg, chat_id=chat_id, message_id=message_id, parse_mode='Markdown')
 
 
 
