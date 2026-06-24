@@ -1967,25 +1967,38 @@ def generate_ai_quiz_thread(message, user_id, session, count, time_limit):
     chat_id = message.chat.id
     message_id = message.message_id
     
+    # Foydalanuvchi tanlagan tilni aniqlash
+    user_lang = get_user_language(user_id)
+    lang_names = {
+        'uz': "O'zbek",
+        'en': "English",
+        'ru': "Russian (Русский)",
+        'tr': "Turkish (Türkçe)",
+        'de': "German (Deutsch)",
+        'ar': "Arabic (العربية)"
+    }
+    lang_display = lang_names.get(user_lang, "O'zbek")
+    
     try:
         prompt = (
-            f"Sizga taqdim etilgan matn yoki rasmdagi ma'lumotlardan foydalanib, roppa-rosa {count} ta "
-            "ko'p variantli (multiple choice) test savollarini yarating. "
-            "Barcha savollar, variantlar va tushuntirishlar faqat o'zbek tilida bo'lishi kerak. "
-            "Har bir savol uchun aniq 4 ta variant (options) tayyorlang.\n\n"
-            "Agar matnda tayyor savollar va to'g'ri javoblar ko'rsatilgan bo'lsa (masalan `#`, `*`, `bold` belgilar orqali), "
-            "o'sha tayyor savollardan va ko'rsatilgan to'g'ri javoblardan foydalaning va to'g'ri javobning indeksini belgilang.\n\n"
-            "Natijani mutlaqo qat'iy ravishda quyidagi JSON formatida qaytaring. Hech qanday boshqa matn, kirish yoki markdown formatting (masalan ```json) qo'shmang, "
-            "faqat quyidagi struktura bo'yicha toza JSON yuboring:\n"
+            f"Using the provided text or image content, create exactly {count} "
+            "multiple choice quiz questions. "
+            f"IMPORTANT: All questions, answer options, and explanations MUST be written ONLY in {lang_display} language. "
+            "Do NOT use any other language. "
+            "Prepare exactly 4 answer options for each question.\n\n"
+            "If the text already contains ready-made questions and correct answers (e.g., marked with `#`, `*`, `bold`), "
+            "use those existing questions and indicated correct answers, and mark the correct answer index accordingly.\n\n"
+            "Return the result strictly in the following JSON format. Do not add any other text, introduction, or markdown formatting (e.g. ```json). "
+            "Send only clean JSON with the following structure:\n"
             "{\n"
-            '  "title": "Mavzuga mos chiroyli test sarlavhasi (maksimal 50 ta belgi)",\n'
-            '  "description": "Fayl/mavzu haqida qisqacha izoh (maksimal 150 ta belgi)",\n'
+            '  "title": "A suitable quiz title related to the topic (max 50 characters)",\n'
+            '  "description": "A brief description of the file/topic (max 150 characters)",\n'
             '  "questions": [\n'
             "    {\n"
-            '      "question": "Savol matni (maksimal 150 ta belgi)",\n'
-            '      "options": ["1-variant", "2-variant", "3-variant", "4-variant"],\n'
+            '      "question": "Question text (max 150 characters)",\n'
+            '      "options": ["option1", "option2", "option3", "option4"],\n'
             '      "correct_option_index": 0,\n'
-            '      "explanation": "Nega aynan shu variant to\'g\'ri ekanligining qisqacha izohi (maksimal 100 ta belgi, ixtiyoriy)"\n'
+            '      "explanation": "Brief explanation of why this answer is correct (max 100 characters, optional)"\n'
             "    }\n"
             "  ]\n"
             "}"
