@@ -123,13 +123,13 @@ def generate_quiz_via_ai(session, prompt):
                 if len(full_content) > 60000:
                     full_content = full_content[:60000] + "\n...[Matn juda uzunligi uchun kesildi]..."
                 messages = [
-                    {"role": "system", "content": "Siz ko'p variantli test savollari yaratuvchi yordamchisiz. Javobingizni faqat taqdim etilgan struktura bo'yicha JSON formatida yuboring. Hech qanday markdown belgilari (masalan ```json) qo'shmang."},
+                    {"role": "system", "content": "You are a quiz creator assistant. Generate questions STRICTLY in the language specified in the user's prompt. Return ONLY raw JSON without any markdown formatting (no ```json)."},
                     {"role": "user", "content": f"{prompt}\n\nTahlil qilinadigan matn:\n{full_content}"}
                 ]
             else:
                 base64_image = base64.b64encode(session['data']).decode('utf-8')
                 messages = [
-                    {"role": "system", "content": "Siz ko'p variantli test savollari yaratuvchi yordamchisiz. Javobingizni faqat taqdim etilgan struktura bo'yicha JSON formatida yuboring. Hech qanday markdown belgilari (masalan ```json) qo'shmang."},
+                    {"role": "system", "content": "You are a quiz creator assistant. Generate questions STRICTLY in the language specified in the user's prompt. Return ONLY raw JSON without any markdown formatting (no ```json)."},
                     {
                         "role": "user",
                         "content": [
@@ -207,7 +207,7 @@ def generate_quiz_via_ai(session, prompt):
             payload = {
                 "model": "claude-3-5-sonnet-20241022",
                 "max_tokens": 4000,
-                "system": "Siz ko'p variantli test savollari yaratuvchi yordamchisiz. Javobingizni faqat taqdim etilgan struktura bo'yicha toza JSON formatida yuboring. Hech qanday markdown belgilari (masalan ```json) yoki qo'shimcha tushuntirish matni yozmang, faqat raw JSON matn yuboring.",
+                "system": "You are a quiz creator assistant. Generate questions STRICTLY in the language specified in the user's prompt. Return ONLY raw JSON without any markdown or extra text.",
                 "messages": messages
             }
             
@@ -243,7 +243,7 @@ def generate_quiz_via_ai(session, prompt):
                     full_content = full_content[:60000] + "\n...[Matn juda uzunligi uchun kesildi]..."
                 
                 messages = [
-                    {"role": "system", "content": "Siz ko'p variantli test savollari yaratuvchi yordamchisiz. Javobingizni faqat taqdim etilgan struktura bo'yicha JSON formatida yuboring. Hech qanday markdown belgilari (masalan ```json) qo'shmang."},
+                    {"role": "system", "content": "You are a quiz creator assistant. Generate questions STRICTLY in the language specified in the user's prompt. Return ONLY raw JSON without any markdown formatting (no ```json)."},
                     {"role": "user", "content": f"{prompt}\n\nTahlil qilinadigan matn:\n{full_content}"}
                 ]
                 
@@ -282,13 +282,13 @@ def generate_quiz_via_ai(session, prompt):
                 if len(full_content) > 60000:
                     full_content = full_content[:60000] + "\n...[Matn juda uzunligi uchun kesildi]..."
                 messages = [
-                    {"role": "system", "content": "Siz ko'p variantli test savollari yaratuvchi yordamchisiz. Javobingizni faqat taqdim etilgan struktura bo'yicha JSON formatida yuboring. Hech qanday markdown belgilari (masalan ```json) qo'shmang."},
+                    {"role": "system", "content": "You are a quiz creator assistant. Generate questions STRICTLY in the language specified in the user's prompt. Return ONLY raw JSON without any markdown formatting (no ```json)."},
                     {"role": "user", "content": f"{prompt}\n\nTahlil qilinadigan matn:\n{full_content}"}
                 ]
             else:
                 base64_image = base64.b64encode(session['data']).decode('utf-8')
                 messages = [
-                    {"role": "system", "content": "Siz ko'p variantli test savollari yaratuvchi yordamchisiz. Javobingizni faqat taqdim etilgan struktura bo'yicha JSON formatida yuboring. Hech qanday markdown belgilari (masalan ```json) qo'shmang."},
+                    {"role": "system", "content": "You are a quiz creator assistant. Generate questions STRICTLY in the language specified in the user's prompt. Return ONLY raw JSON without any markdown formatting (no ```json)."},
                     {
                         "role": "user",
                         "content": [
@@ -2087,10 +2087,33 @@ def generate_ai_quiz_thread(message, user_id, session, count, time_limit):
     except Exception as e:
         error_msg = str(e)
         print(f"AI error: {error_msg}")
-        if "429" in error_msg or "Quota" in error_msg:
-            user_msg = "❌ Kechirasiz, ayni vaqtda botga so'rovlar juda ko'payib ketdi (AI limiti tugadi). Iltimos, birozdan so'ng (1-2 daqiqa) qayta urinib ko'ring."
+        # Barcha AI provayderlar muvaffaqiyatsiz bo'ldi
+        if "Barcha AI provayderlari" in error_msg:
+            # Har bir provayderning xato sababini ajrat
+            if "429" in error_msg or "quota" in error_msg.lower() or "rate" in error_msg.lower():
+                user_msg = (
+                    "❌ Barcha AI modellar (Gemini, OpenAI, Claude, Grok) so'rovlar limitini oshirib yubordi.\n\n"
+                    "Iltimos, bir necha daqiqadan so'ng qayta urinib ko'ring."
+                )
+            elif "401" in error_msg or "Unauthorized" in error_msg or "Invalid" in error_msg:
+                user_msg = (
+                    "❌ AI API kalitlari noto'g'ri yoki muddati o'tgan.\n\n"
+                    "Administrator bilan bog'laning."
+                )
+            elif "insufficient_quota" in error_msg or "billing" in error_msg.lower():
+                user_msg = (
+                    "❌ AI API hisoblarida mablag' tugagan.\n\n"
+                    "Administrator bilan bog'laning."
+                )
+            else:
+                user_msg = (
+                    "❌ Barcha AI modellarda xatolik yuz berdi.\n\n"
+                    f"Sabab: `{error_msg[:300]}`"
+                )
+        elif "sozlanmagan" in error_msg:
+            user_msg = "❌ Hech qanday AI API kaliti sozlanmagan. Administrator bilan bog'laning."
         else:
-            user_msg = f"❌ Test yaratishda xatolik yuz berdi:\n`{error_msg}`"
+            user_msg = f"❌ Test yaratishda kutilmagan xatolik:\n`{error_msg[:300]}`"
         bot.edit_message_text(user_msg, chat_id=chat_id, message_id=message_id, parse_mode='Markdown')
 
 
